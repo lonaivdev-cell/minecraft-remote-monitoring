@@ -1,0 +1,6 @@
+[Unit]
+Description=mcctl autosave trigger (save-all flush)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/mcctl save --skip-if-down
