@@ -16,6 +16,7 @@ import contextlib
 import queue
 import sys
 import threading
+from pathlib import Path
 
 import gi
 
@@ -23,8 +24,6 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
-
-from pathlib import Path  # noqa: E402
 
 from . import __version__, logs, metrics, state, util  # noqa: E402
 from .backup import BackupManager  # noqa: E402
