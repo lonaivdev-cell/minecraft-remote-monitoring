@@ -1,2 +1,171 @@
-# minecraft-remote-monitoring
-A simple Arch Linux program to monitor and manage a remote minecraft server, connected via SSH or RDP
+# mcctl — Minecraft Remote Control & Monitoring
+
+Arch Linux CLI/TUI that fully drives a remote modded Minecraft server over SSH.
+Built for the **CarborioLand** stack — Medieval MC MMC5 (NeoForge 1.21.1) on an
+ARM64 OCI box, launched via ServerPackCreator's `start.sh` inside tmux — but
+everything is configurable.
+
+```
+mcctl init  →  mcctl doctor  →  mcctl start  →  mcctl dash
+```
+
+## Design at a glance
+
+| Piece | Choice | Why |
+|---|---|---|
+| Transport | system OpenSSH + ControlMaster multiplexing | one handshake, every command ~10 ms; your `~/.ssh/config`, keys and agent just work |
+| Remote shell | every payload piped to `bash -s` over stdin | the remote login shell (fish) never parses a byte — zero quoting hazards |
+| Console channel | RCON through an SSH `-L` tunnel, tmux `send-keys` + log-offset fallback | reliable request/response; works even with RCON off |
+| Secrets | none stored locally | RCON password is read from the remote `server.properties` on demand |
+| Liveness | java process with `cwd == server_dir` **and** tmux session | survives the "wrong session name / wrong user" trap |
+| Crash forensics | tmux `remain-on-exit` + evidence bundles | dead panes are captured before the watchdog reaps them |
+| Server-side deps | bash + coreutils + tmux (+ zstd recommended) | nothing to install or maintain on the VM |
+
+## Features
+
+| Command | What it does |
+|---|---|
+| `mcctl status [--json] [--fast]` | process/tmux/port/players/TPS/heap/host RAM/disk/backup age, one screen |
+| `mcctl start` / `stop` / `restart` | tmux + `start.sh` boot with readiness detection; graceful stop: player countdown → `save-all flush` → `stop` → SIGTERM → SIGKILL escalation |
+| `mcctl dash` | live TUI: TPS sparkline, heap/RAM gauges, log tail; keys for save/backup/purge/start/stop |
+| `mcctl backup [create\|list\|prune\|pull\|verify\|restore]` | consistent snapshots (`save-off` → flush → tar+zstd → verify → `save-on` guaranteed), GFS rotation, rsync pull, safe restore |
+| `mcctl save` | `save-all flush` with confirmation; `--skip-if-down` for timers |
+| `mcctl watchdog [run\|arm\|disarm\|status\|install]` | self-healing daemon: crash restart with backoff, freeze detection (stale log + dead console → thread dump → restart), crash-loop breaker, TPS/heap/disk/SSH alerts |
+| `mcctl tps` / `health` / `profile` | spark TPS/MSPT/CPU, memory/disk health, async profiler → `spark.lucko.me` URL |
+| `mcctl purge` | `jcmd GC.run` with before/after heap — honest *garbage vs real leak* verdict |
+| `mcctl props [list\|get\|set]` | validated `server.properties` editor: typed/ranged keys, atomic writes, remote `.bak`, `--live` apply where supported |
+| `mcctl jvm [show\|heap 12G\|java PATH]` | `variables.txt` editor — rewrites Xms/Xmx, preserves Aikar's flags |
+| `mcctl player …` | list, whitelist add/remove/on/off, op/deop, kick/ban/pardon |
+| `mcctl cmd <anything>` / `console` | arbitrary console commands; `console` attaches to the live tmux (detach: `Ctrl-b d`) |
+| `mcctl logs [-f] [crash]` | tail/follow `latest.log`; list/fetch crash reports (escape-sequence-sanitized) |
+| `mcctl stats` | local JSONL metrics history (TPS, MSPT, heap, RAM, players) |
+| `mcctl sync --pull/--push` | rsync the `config/` dir — the Better Compatibility Checker mismatch fix |
+| `mcctl doctor [--fix]` | end-to-end preflight; encodes the hard-won knowledge (below) |
+
+## Install
+
+**Arch (recommended):**
+
+```fish
+git clone https://github.com/lonaivdev-cell/minecraft-remote-monitoring
+cd minecraft-remote-monitoring
+makepkg -si
+```
+
+Installs the CLI, systemd user units, and fish completions.
+Dependencies: `python` `python-rich` `openssh` `rsync` (optional: `libnotify`, `zstd`).
+
+**Anywhere else:** `pipx install .` then `mcctl watchdog install` for the user units.
+
+## Quickstart
+
+```fish
+mcctl init                  # writes ~/.config/mcctl/config.toml (CarborioLand defaults)
+mcctl doctor --fix          # verifies SSH→layout→JVM→props; applies safe fixes
+mcctl start                 # boots in tmux, waits for "Done (…)!"
+mcctl dash                  # watch it live
+```
+
+`doctor --fix` will: set `SKIP_JAVA_CHECK=true`, `WAIT_FOR_USER_INPUT=false`,
+`SERVERSTARTERJAR_FORCE_FETCH=false` in `variables.txt`, create the backup dir,
+and enable RCON with a generated password (active after next restart).
+
+## Automation (systemd user units)
+
+```fish
+systemctl --user daemon-reload
+systemctl --user enable --now mcctl-watchdog.service   # self-healing
+systemctl --user enable --now mcctl-backup.timer       # daily 04:30 backup + rotation
+systemctl --user enable --now mcctl-autosave.timer     # save-all every 20 min
+mcctl watchdog arm                                     # actually allow healing
+loginctl enable-linger $USER                           # keep units running after logout
+```
+
+### Self-healing semantics (read once)
+
+| State | Meaning |
+|---|---|
+| `armed` | master switch — **off by default**; disarm during migrations so a stale server can't be relaunched |
+| `desired` | user intent, set by `mcctl start`/`stop` — the watchdog never resurrects a server you stopped on purpose |
+| `halted` | crash-loop breaker tripped (default: 3 restarts/hour) — alerts loudly, stays down until `mcctl start` or re-arm |
+
+Freeze = log silent beyond `freeze_log_age` **and** console unresponsive → thread
+dump saved locally → forced restart. Evidence bundles (pane capture, log tail,
+crash report) land in `~/.local/state/mcctl/crashes/` before every heal.
+
+## Backups
+
+- **Consistent while live:** `save-off` → `save-all flush` → wait "Saved the game" → `tar | zstd` → integrity test → `save-on` (re-enabled on *every* code path).
+- **Rotation (GFS):** newest 8 + 1/day for 7 days + 1/ISO-week for 4 weeks; `--full` instance archives are never auto-deleted.
+- **Disk guard:** refuses below `min_free_gb`; never overwrites — restore moves the current world to `world.pre-restore-<ts>`.
+- `mcctl backup pull` mirrors archives to this machine over rsync.
+
+## Security notes
+
+- RCON is reached **only** through the SSH tunnel; keep 25575 closed in the OCI
+  security list — `mcctl doctor` actively probes from outside and fails if it's reachable.
+- All remote output (logs, crash reports, console replies) is stripped of ANSI/OSC
+  escape sequences before printing — remote text can't drive your terminal.
+- SSH runs with `BatchMode=yes` (keys/agent only) and `accept-new` host keys.
+- Heads-up: crash logs from this modpack are known to contain embedded
+  prompt-injection text. It's inert noise — read the stack trace, ignore the prose.
+
+## Hard-won knowledge, encoded
+
+| Lesson | Where it lives |
+|---|---|
+| Launch = `start.sh` + `variables.txt` (ServerStarterJar), not `run.sh` | `server.py` start flow, config default |
+| GraalVM vs SPC java check → `SKIP_JAVA_CHECK=true` | `doctor --fix` |
+| `WAIT_FOR_USER_INPUT=false` or tmux hangs on Enter | `doctor --fix` |
+| IPv4/IPv6: `server-ip=0.0.0.0`, `use-native-transport=false`, `-Djava.net.preferIPv4Stack=true` | `doctor` checks, props specs |
+| `-XX:+ExplicitGCInvokesConcurrent` so `jcmd GC.run` works | `mcctl purge` |
+| Verify by **process + session**, not session name | `find_pid` (pgrep + `/proc/<pid>/cwd`) |
+| Watchdog must stand down during migrations | disarmed by default, `desired` intent tracking |
+| `config/` drift → BCC version mismatch | `mcctl sync` |
+
+## Architecture
+
+```
+src/mcctl/
+├── cli.py        argparse tree, exit codes (0 ok / 1 error / 2 usage / 3 unreachable)
+├── config.py     TOML config, validation, template
+├── transport.py  SSH ControlMaster wrapper + LocalTransport (dev/tests)
+├── rcon.py       Source-RCON client (fragmentation-aware)
+├── console.py    channel facade: RCON-over-tunnel → tmux+log fallback
+├── server.py     status probe (1 round-trip), start/stop/restart state machine
+├── backup.py     snapshots, GFS rotation (pure+tested), pull, verify, restore
+├── watchdog.py   observe → decide (pure) → act; crash-loop breaker
+├── spark.py      tps/health parsers, async profiler
+├── metrics.py    jcmd heap, purge verdict, JSONL history
+├── props.py      server.properties + variables.txt editors
+├── players.py    whitelist/op/kick/ban
+├── logs.py       tail/follow/crash reports, evidence bundles, sanitization
+├── doctor.py     preflight checks + safe fixes
+├── dash.py       rich Live dashboard
+└── state.py      armed/desired/halted/restart-history persistence
+```
+
+## Development & testing
+
+```fish
+make dev        # editable install + pytest + ruff
+make test       # 141 unit tests, <1s — FakeTransport + FakeClock, no server needed
+make test-all   # + integration: real tmux session driving a fake "java" server
+make lint
+```
+
+The integration suite boots an actual tmux session running a bash renamed to
+`java` (so pgrep/cwd detection is genuinely exercised), then drives start →
+console → backup → verify → stop → restore → crash-corpse detection end to end.
+CI runs lint + both suites on every push.
+
+---
+
+## #TODO — HIGH PRIORITY: Android companion app
+
+> **Next development cycle: build an Android app with feature parity (status,
+> start/stop, dashboards, backups, alerts) for managing CarborioLand from a
+> phone.** The full development plan — architecture decision, phased roadmap,
+> security model, testing strategy — lives in **[TODO.md](TODO.md)**.
+> The groundwork is already here: every query has `--json` output, and the
+> watchdog/webhook layer gives push-style alerting today.

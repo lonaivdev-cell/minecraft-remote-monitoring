@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.eggs/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# makepkg artifacts
+pkg/
+src/mcctl-*/
+*.pkg.tar.zst
+*.log.makepkg
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store

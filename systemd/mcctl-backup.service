@@ -1,0 +1,6 @@
+[Unit]
+Description=mcctl world backup + rotation
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/mcctl backup create --notify

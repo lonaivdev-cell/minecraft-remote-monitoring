@@ -1,0 +1,10 @@
+[Unit]
+Description=mcctl daily world backup (04:30, before anyone is online)
+
+[Timer]
+OnCalendar=*-*-* 04:30:00
+RandomizedDelaySec=10m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
