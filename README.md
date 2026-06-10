@@ -28,6 +28,7 @@ mcctl init  →  mcctl doctor  →  mcctl start  →  mcctl dash
 | `mcctl status [--json] [--fast]` | process/tmux/port/players/TPS/heap/host RAM/disk/backup age, one screen |
 | `mcctl start` / `stop` / `restart` | tmux + `start.sh` boot with readiness detection; graceful stop: player countdown → `save-all flush` → `stop` → SIGTERM → SIGKILL escalation |
 | `mcctl dash` | live TUI: TPS sparkline, heap/RAM gauges, log tail; keys for save/backup/purge/start/stop |
+| `mcctl gui` / `mcctl-gui` | native GTK4/libadwaita desktop app: live status, start/stop/restart, console, logs, players, backups |
 | `mcctl backup [create\|list\|prune\|pull\|verify\|restore]` | consistent snapshots (`save-off` → flush → tar+zstd → verify → `save-on` guaranteed), GFS rotation, rsync pull, safe restore |
 | `mcctl save` | `save-all flush` with confirmation; `--skip-if-down` for timers |
 | `mcctl watchdog [run\|arm\|disarm\|status\|install]` | self-healing daemon: crash restart with backoff, freeze detection (stale log + dead console → thread dump → restart), crash-loop breaker, TPS/heap/disk/SSH alerts |
@@ -52,8 +53,15 @@ cd minecraft-remote-monitoring
 makepkg -si
 ```
 
-Installs the CLI, systemd user units, and fish completions.
+Installs the CLI, the desktop app entry, systemd user units, and fish completions.
 Dependencies: `python` `python-rich` `openssh` `rsync` (optional: `libnotify`, `zstd`).
+
+For the GUI (optional — shows up in your app launcher as **mcctl**):
+
+```fish
+sudo pacman -S --needed gtk4 libadwaita python-gobject
+mcctl-gui   # or `mcctl gui`, or launch it from the app grid
+```
 
 **Anywhere else:** `pipx install .` then `mcctl watchdog install` for the user units.
 
@@ -142,6 +150,8 @@ src/mcctl/
 ├── logs.py       tail/follow/crash reports, evidence bundles, sanitization
 ├── doctor.py     preflight checks + safe fixes
 ├── dash.py       rich Live dashboard
+├── gui.py        GUI launcher: dependency check, friendly pacman hint
+├── gui_app.py    GTK4 + libadwaita desktop app (single worker thread for SSH)
 └── state.py      armed/desired/halted/restart-history persistence
 ```
 

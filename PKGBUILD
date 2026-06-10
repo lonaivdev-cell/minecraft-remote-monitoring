@@ -14,6 +14,9 @@ optdepends=(
     'libnotify: desktop notifications from the watchdog'
     'zstd: local verification of pulled backup archives'
     'tmux: integration tests / local transport mode'
+    'python-gobject: GTK desktop app (mcctl-gui)'
+    'gtk4: GTK desktop app (mcctl-gui)'
+    'libadwaita: GTK desktop app (mcctl-gui)'
 )
 
 build() {
@@ -41,6 +44,10 @@ package() {
         "$pkgdir/usr/lib/systemd/user/mcctl-backup.timer"
     install -Dm644 completions/mcctl.fish \
         "$pkgdir/usr/share/fish/vendor_completions.d/mcctl.fish"
+    install -Dm644 data/io.github.lonaivdev_cell.mcctl.desktop \
+        "$pkgdir/usr/share/applications/io.github.lonaivdev_cell.mcctl.desktop"
+    install -Dm644 data/icons/io.github.lonaivdev_cell.mcctl.svg \
+        "$pkgdir/usr/share/icons/hicolor/scalable/apps/io.github.lonaivdev_cell.mcctl.svg"
     install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
     install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
 }

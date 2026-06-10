@@ -19,6 +19,9 @@ dev = ["pytest>=7", "ruff>=0.4"]
 [project.scripts]
 mcctl = "mcctl.cli:main"
 
+[project.gui-scripts]
+mcctl-gui = "mcctl.gui:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
