@@ -24,6 +24,8 @@ gi.require_version("Adw", "1")
 
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
+from pathlib import Path  # noqa: E402
+
 from . import __version__, logs, metrics, state, util  # noqa: E402
 from .backup import BackupManager  # noqa: E402
 from .config import Config, ConfigError  # noqa: E402
@@ -156,6 +158,8 @@ class Window(Adw.ApplicationWindow):
                                         "system-users-symbolic")
         self.stack.add_titled_with_icon(self._build_backups(), "backups", "Backups",
                                         "drive-harddisk-symbolic")
+        self.stack.add_titled_with_icon(self._build_settings(), "settings", "Settings",
+                                        "preferences-system-symbolic")
         self.stack.connect("notify::visible-child-name", lambda *_: self._refresh_aux())
 
         header = Adw.HeaderBar(
@@ -308,6 +312,51 @@ class Window(Adw.ApplicationWindow):
         return Gtk.ScrolledWindow(child=Adw.Clamp(maximum_size=760, child=box),
                                   hscrollbar_policy=Gtk.PolicyType.NEVER)
 
+    def _build_settings(self) -> Gtk.Widget:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18,
+                      margin_top=24, margin_bottom=24, margin_start=12, margin_end=12)
+
+        g = Adw.PreferencesGroup(title="SSH Connection")
+
+        self.settings_host = Adw.EntryRow(title="Host / IP")
+        g.add(self.settings_host)
+
+        self.settings_user = Adw.EntryRow(title="User")
+        g.add(self.settings_user)
+
+        self.settings_port = Adw.EntryRow(title="SSH Port")
+        g.add(self.settings_port)
+
+        self.settings_key = Adw.EntryRow(title="SSH Private Key",
+                                         tooltip_text="Path to private key, e.g. ~/.ssh/id_rsa")
+        browse_btn = Gtk.Button(icon_name="document-open-symbolic", valign=Gtk.Align.CENTER,
+                                tooltip_text="Browse for key file")
+        browse_btn.add_css_class("flat")
+        browse_btn.connect("clicked", self._on_key_browse)
+        self.settings_key.add_suffix(browse_btn)
+        g.add(self.settings_key)
+
+        box.append(g)
+
+        self.settings_cmd_preview = Gtk.Label(halign=Gtk.Align.START,
+                                              wrap=True, selectable=True)
+        self.settings_cmd_preview.add_css_class("dim-label")
+        self.settings_cmd_preview.add_css_class("monospace")
+        self.settings_cmd_preview.add_css_class("caption")
+        box.append(self.settings_cmd_preview)
+
+        apply_btn = Gtk.Button(label="Apply & Reconnect", halign=Gtk.Align.END)
+        apply_btn.add_css_class("suggested-action")
+        apply_btn.add_css_class("pill")
+        apply_btn.connect("clicked", self._on_settings_apply)
+        box.append(apply_btn)
+
+        for entry in (self.settings_host, self.settings_user, self.settings_port, self.settings_key):
+            entry.connect("changed", lambda *_: self._update_ssh_cmd_preview())
+
+        return Gtk.ScrolledWindow(child=Adw.Clamp(maximum_size=760, child=box),
+                                  hscrollbar_policy=Gtk.PolicyType.NEVER)
+
     # ------------------------------------------------------------ UI helpers
 
     def _pill(self, label: str, cb, *classes: str) -> Gtk.Button:
@@ -378,6 +427,81 @@ class Window(Adw.ApplicationWindow):
         dlg.connect("response", lambda _d, resp: on_confirm() if resp == "go" else None)
         dlg.present(self)
 
+    def _sync_settings(self) -> None:
+        """Populate settings fields from the current config (called when tab becomes active)."""
+        s = self.remote.cfg.server
+        self.settings_host.set_text(s.host)
+        self.settings_user.set_text(s.user)
+        self.settings_port.set_text(str(s.ssh_port))
+        self.settings_key.set_text(s.ssh_key)
+        self._update_ssh_cmd_preview()
+
+    def _update_ssh_cmd_preview(self) -> None:
+        host = self.settings_host.get_text().strip()
+        user = self.settings_user.get_text().strip()
+        key = self.settings_key.get_text().strip()
+        port = self.settings_port.get_text().strip()
+        cmd = "ssh"
+        if key:
+            cmd += f" -i {key}"
+        if port and port != "22":
+            cmd += f" -p {port}"
+        target = f"{user}@{host}" if user or host else "<user>@<host>"
+        self.settings_cmd_preview.set_label(f"$ {cmd} {target}")
+
+    def _on_key_browse(self, *_) -> None:
+        if hasattr(Gtk, "FileDialog"):
+            dlg = Gtk.FileDialog(title="Select SSH Private Key")
+            ssh_dir = Path.home() / ".ssh"
+            if ssh_dir.exists():
+                dlg.set_initial_folder(Gio.File.new_for_path(str(ssh_dir)))
+            dlg.open(self, None, self._on_key_chosen)
+        else:
+            self._toast("File browser requires GTK 4.10+ — enter the path manually", timeout=4)
+
+    def _on_key_chosen(self, dlg, result) -> None:
+        try:
+            f = dlg.open_finish(result)
+            if f:
+                self.settings_key.set_text(f.get_path() or "")
+                self._update_ssh_cmd_preview()
+        except GLib.Error:
+            pass
+
+    def _on_settings_apply(self, *_) -> None:
+        from .config import ConfigError
+        s = self.remote.cfg.server
+        s.host = self.settings_host.get_text().strip()
+        s.user = self.settings_user.get_text().strip()
+        s.ssh_key = self.settings_key.get_text().strip()
+        try:
+            s.ssh_port = int(self.settings_port.get_text().strip() or "22")
+        except ValueError:
+            self._toast("SSH Port must be a number", timeout=5)
+            return
+        try:
+            self.remote.cfg.validate()
+        except ConfigError as e:
+            self._toast(f"Config error: {e}", timeout=8)
+            return
+        try:
+            saved = self.remote.cfg.save()
+            self._toast(f"Saved to {saved}", timeout=4)
+        except (ConfigError, OSError) as e:
+            self._toast(f"Could not save config: {e}", timeout=8)
+            return
+
+        def reconnect():
+            self.remote.close()
+
+        def done(_):
+            self.remote._t = None
+            self.remote._console = None
+            self.remote._ctl = None
+            self._refresh(full=True)
+
+        self.worker.submit(reconnect, done)
+
     # ------------------------------------------------------------- refresh
 
     def _on_tick(self) -> bool:
@@ -423,6 +547,8 @@ class Window(Adw.ApplicationWindow):
             self._refresh_players()
         elif page == "backups":
             self._refresh_backups()
+        elif page == "settings":
+            self._sync_settings()
 
     def _refresh_logs(self) -> None:
         if self._logs_refreshing or self._busy:
