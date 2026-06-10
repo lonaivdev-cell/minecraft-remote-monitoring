@@ -1,6 +1,6 @@
 # fish completions for mcctl — Minecraft remote control & monitoring
 
-set -l cmds init doctor status start stop restart kill console cmd save tps health profile purge stats logs backup props jvm player watchdog sync rcon dash
+set -l cmds init doctor status start stop restart kill console cmd save tps health profile purge stats logs backup props jvm player watchdog sync rcon dash gui
 
 complete -c mcctl -f
 
@@ -34,6 +34,7 @@ complete -c mcctl -n "not __fish_seen_subcommand_from $cmds" -a watchdog -d 'sel
 complete -c mcctl -n "not __fish_seen_subcommand_from $cmds" -a sync -d 'rsync config dir'
 complete -c mcctl -n "not __fish_seen_subcommand_from $cmds" -a rcon -d 'RCON channel status'
 complete -c mcctl -n "not __fish_seen_subcommand_from $cmds" -a dash -d 'live TUI dashboard'
+complete -c mcctl -n "not __fish_seen_subcommand_from $cmds" -a gui -d 'GTK desktop app'
 
 # per-subcommand
 complete -c mcctl -n "__fish_seen_subcommand_from init" -l force -d 'overwrite existing config'

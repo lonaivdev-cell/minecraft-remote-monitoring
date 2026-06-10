@@ -640,6 +640,11 @@ def cmd_dash(ctx: Ctx) -> int:
     return 0
 
 
+def cmd_gui(ctx: Ctx) -> int:
+    from .gui import main as gui_main
+    return gui_main(["--config", ctx.args.config] if ctx.args.config else [])
+
+
 # ================================================================ parser
 
 def build_parser() -> argparse.ArgumentParser:
@@ -831,6 +836,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("dash", help="live TUI dashboard")
     sp.set_defaults(func=cmd_dash)
+
+    sp = sub.add_parser("gui", help="GTK4/libadwaita desktop app (also installed as mcctl-gui)")
+    sp.set_defaults(func=cmd_gui)
 
     return p
 
