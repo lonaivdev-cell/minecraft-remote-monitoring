@@ -16,6 +16,7 @@ Design rules:
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from collections.abc import Callable
@@ -28,8 +29,11 @@ log = util.get_logger("llm")
 INSTALL_HINT = (
     "the `anthropic` package is not installed.\n"
     "  pacman:  sudo pacman -S python-anthropic   (or: pipx inject mcctl anthropic)\n"
-    "  pip:     pip install anthropic"
+    "  pip:     pip install anthropic\n"
+    "  or set [llm].provider = \"ollama\" to use a local model instead"
 )
+
+OLLAMA_TIMEOUT = 600  # seconds; local models can be slow on first load
 
 SYSTEM_PROMPT = """\
 You are the analysis engine inside mcctl, a remote-control tool for a single-owner \
@@ -99,10 +103,27 @@ def envelope(kind: str, text: str, *, limit: int = 120_000) -> str:
     return f'<data kind="{kind}">\n{text}\n</data>'
 
 
-# ---------------------------------------------------------------- client
+# ---------------------------------------------------------------- provider selection
 
-def available() -> tuple[bool, str]:
-    """(usable, reason-if-not) — checked by the GUI before showing the AI page."""
+def active_model(cfg: Config) -> str:
+    """The model name the configured provider will actually use (for UI labels)."""
+    return cfg.llm.ollama_model if cfg.llm.provider == "ollama" else cfg.llm.model
+
+
+def provider_label(cfg: Config) -> str:
+    if cfg.llm.provider == "ollama":
+        return f"ollama · {cfg.llm.ollama_model}"
+    return cfg.llm.model
+
+
+def available(cfg: Config | None = None) -> tuple[bool, str]:
+    """(usable, reason-if-not) — checked before showing the AI/Chat pages.
+
+    Anthropic needs the optional SDK importable; ollama has no client-side
+    dependency (mcctl speaks its HTTP API directly), so reachability is only
+    discovered at request time — keep this cheap and non-blocking."""
+    if cfg is not None and cfg.llm.provider == "ollama":
+        return True, ""
     try:
         import anthropic  # noqa: F401
     except ImportError:
@@ -114,7 +135,9 @@ def _adaptive_ok(model: str) -> bool:
     return bool(re.search(r"(opus-4-[678]|sonnet-4-6|fable|mythos)", model))
 
 
-class Analyst:
+# ---------------------------------------------------------------- backends
+
+class _AnthropicBackend:
     def __init__(self, cfg: Config):
         self.cfg = cfg
 
@@ -132,27 +155,19 @@ class Analyst:
             raise LlmError(f"no API key: export {key_env} (see [llm] in the config)")
         return anthropic.Anthropic(api_key=key)
 
-    def analyze(self, kind: str, parts: list[str], *, question: str = "",
-                on_text: Callable[[str], None] | None = None) -> str:
-        """Run one analysis. `parts` are pre-built <data> envelopes; `on_text`
-        receives streamed text chunks (CLI prints live, GUI appends)."""
+    def stream(self, messages: list[dict], on_text: Callable[[str], None] | None) -> str:
         client = self._client()  # raises LlmError with an actionable hint
         import anthropic
-        task = KIND_PROMPTS.get(kind, KIND_PROMPTS["ask"])
-        if question:
-            task += f"\n\nOperator's question: {question}"
-        user_msg = task + "\n\n" + "\n\n".join(parts)
         llm = self.cfg.llm
         kwargs: dict = {}
         if _adaptive_ok(llm.model):
             kwargs["thinking"] = {"type": "adaptive"}
-        log.info("llm analyze kind=%s model=%s payload=%dB", kind, llm.model, len(user_msg))
         try:
             with client.messages.stream(
                 model=llm.model,
                 max_tokens=llm.max_tokens,
                 system=SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": user_msg}],
+                messages=messages,
                 **kwargs,
             ) as stream:
                 for chunk in stream.text_stream:
@@ -174,6 +189,94 @@ class Analyst:
         if final.stop_reason == "max_tokens":
             text += "\n\n[answer truncated at max_tokens — raise [llm].max_tokens to continue]"
         return text
+
+
+class _OllamaBackend:
+    """Talks to a local ollama server's /api/chat over plain HTTP (stdlib only).
+
+    No data leaves the machine and no API key is involved; the system prompt and
+    redaction guarantees are identical to the Anthropic path."""
+
+    def __init__(self, cfg: Config):
+        self.cfg = cfg
+
+    def stream(self, messages: list[dict], on_text: Callable[[str], None] | None) -> str:
+        import urllib.error
+        import urllib.request
+        llm = self.cfg.llm
+        url = llm.ollama_url.rstrip("/") + "/api/chat"
+        body = json.dumps({
+            "model": llm.ollama_model,
+            "messages": [{"role": "system", "content": SYSTEM_PROMPT}, *messages],
+            "stream": True,
+            "options": {"num_predict": llm.max_tokens},
+        }).encode()
+        req = urllib.request.Request(
+            url, data=body, headers={"Content-Type": "application/json", "User-Agent": "mcctl"})
+        chunks: list[str] = []
+        try:
+            with urllib.request.urlopen(req, timeout=OLLAMA_TIMEOUT) as resp:  # noqa: S310 - local, user-configured
+                for raw in resp:
+                    line = raw.decode("utf-8", "replace").strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except ValueError:
+                        continue
+                    if obj.get("error"):
+                        raise LlmError(f"ollama error: {obj['error']}")
+                    piece = (obj.get("message") or {}).get("content", "")
+                    if piece:
+                        chunks.append(piece)
+                        if on_text:
+                            on_text(piece)
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode("utf-8", "replace")[:300] if e.fp else ""
+            if e.code == 404:
+                raise LlmError(
+                    f"ollama has no model {llm.ollama_model!r} — run "
+                    f"`ollama pull {llm.ollama_model}` (or fix [llm].ollama_model). {detail}") from e
+            raise LlmError(f"ollama HTTP {e.code}: {detail}") from e
+        except (urllib.error.URLError, ConnectionError, OSError, TimeoutError) as e:
+            raise LlmError(
+                f"cannot reach ollama at {llm.ollama_url} — is it running (`ollama serve`)? "
+                f"check [llm].ollama_url. ({e})") from e
+        if not chunks:
+            raise LlmError("ollama returned an empty response")
+        return "".join(chunks)
+
+
+def _backend(cfg: Config):
+    return _OllamaBackend(cfg) if cfg.llm.provider == "ollama" else _AnthropicBackend(cfg)
+
+
+# ---------------------------------------------------------------- analyst
+
+class Analyst:
+    def __init__(self, cfg: Config):
+        self.cfg = cfg
+        self.backend = _backend(cfg)
+
+    def analyze(self, kind: str, parts: list[str], *, question: str = "",
+                on_text: Callable[[str], None] | None = None) -> str:
+        """Run one analysis. `parts` are pre-built <data> envelopes; `on_text`
+        receives streamed text chunks (CLI prints live, GUI appends)."""
+        task = KIND_PROMPTS.get(kind, KIND_PROMPTS["ask"])
+        if question:
+            task += f"\n\nOperator's question: {question}"
+        user_msg = task + "\n\n" + "\n\n".join(parts)
+        log.info("llm analyze kind=%s provider=%s model=%s payload=%dB",
+                 kind, self.cfg.llm.provider, active_model(self.cfg), len(user_msg))
+        return self.backend.stream([{"role": "user", "content": user_msg}], on_text)
+
+    def chat(self, messages: list[dict], *,
+             on_text: Callable[[str], None] | None = None) -> str:
+        """Multi-turn conversation: `messages` is the full [{role, content}, …]
+        history (first turn carries the server context). Returns the reply text."""
+        log.info("llm chat provider=%s model=%s turns=%d",
+                 self.cfg.llm.provider, active_model(self.cfg), len(messages))
+        return self.backend.stream(messages, on_text)
 
 
 # ---------------------------------------------------------------- context builders

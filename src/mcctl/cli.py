@@ -653,12 +653,69 @@ def cmd_mods(ctx: Ctx) -> int:
     return 0
 
 
+def _ai_chat(ctx: Ctx, opening: str) -> int:
+    """Interactive multi-turn conversation. The first turn carries current
+    server context (status + recent log); the rest is a plain chat loop."""
+    from . import llm
+    ok, reason = llm.available(ctx.cfg)
+    if not ok:
+        rc.print(f"[red]{reason}[/red]")
+        return 1
+    analyst = llm.Analyst(ctx.cfg)
+    context = [llm.status_envelope(ctx.ctl),
+               llm.envelope("latest.log tail", logs.tail(ctx.t, ctx.cfg, 120))]
+    messages: list[dict] = []
+    rc.print(f"[dim]chat with {llm.provider_label(ctx.cfg)} — server context attached. "
+             "type 'exit' or Ctrl-D to quit.[/dim]")
+    pending = opening
+    while True:
+        if pending:
+            user, pending = pending, ""
+        else:
+            if not sys.stdin.isatty():
+                break
+            try:
+                user = input("\nyou> ").strip()
+            except EOFError:
+                rc.print("")
+                break
+            if not user:
+                continue
+            if user.lower() in ("exit", "quit", ":q"):
+                break
+        if not messages:  # first turn: prepend the live server context
+            content = ("You are in an interactive session with the server operator. Use "
+                       "the attached current server context when relevant.\n\n"
+                       + "\n\n".join(context) + f"\n\nOperator: {user}")
+        else:
+            content = user
+        messages.append({"role": "user", "content": content})
+        rc.print(f"[dim]{llm.provider_label(ctx.cfg)}…[/dim]")
+        try:
+            reply = analyst.chat(messages, on_text=lambda s: print(s, end="", flush=True))
+        except KeyboardInterrupt:
+            rc.print("\n[yellow]interrupted[/yellow]")
+            messages.pop()
+            continue
+        except LlmError as e:
+            rc.print(f"\n[red]error:[/red] {e}")
+            messages.pop()  # drop the unanswered turn so history stays consistent
+            if not sys.stdin.isatty():
+                return 1     # non-interactive (one-shot) invocation: surface the failure
+            continue
+        print()
+        messages.append({"role": "assistant", "content": reply})
+    return 0
+
+
 def cmd_ai(ctx: Ctx) -> int:
     from . import inspector, llm
     from . import mods as M
     a = ctx.args
     kind = a.ai_cmd or "logs"
     question = " ".join(a.question) if getattr(a, "question", None) else ""
+    if kind == "chat":
+        return _ai_chat(ctx, question)
     parts: list[str] = []
 
     if kind == "logs":
@@ -688,10 +745,98 @@ def cmd_ai(ctx: Ctx) -> int:
         parts.append(llm.status_envelope(ctx.ctl))
         parts.append(llm.envelope("latest.log tail", logs.tail(ctx.t, ctx.cfg, 150)))
 
-    rc.print(f"[dim]asking {ctx.cfg.llm.model}…[/dim]\n")
+    rc.print(f"[dim]asking {llm.provider_label(ctx.cfg)}…[/dim]\n")
     llm.Analyst(ctx.cfg).analyze(kind, parts, question=question,
                                  on_text=lambda s: print(s, end="", flush=True))
     print()
+    return 0
+
+
+def cmd_watch(ctx: Ctx) -> int:
+    from .watch import run_watch
+    run_watch(ctx.cfg, ctx.t, interval=ctx.args.interval, count=ctx.args.count)
+    return 0
+
+
+# metric key -> (label, lo, hi-or-None-for-auto, extractor)
+def _heap_pct(s: dict):
+    used, total = s.get("heap_used"), s.get("heap_max") or s.get("heap_committed")
+    return 100.0 * used / total if used and total else None
+
+
+def _mem_pct(s: dict):
+    used, total = s.get("mem_used"), s.get("mem_total")
+    return 100.0 * used / total if used and total else None
+
+
+_HISTORY_METRICS = {
+    "tps": ("TPS", 0.0, 20.0, lambda s: s.get("tps")),
+    "mspt": ("MSPT (ms)", 0.0, None, lambda s: s.get("mspt")),
+    "heap": ("Heap %", 0.0, 100.0, _heap_pct),
+    "players": ("Players", 0.0, None, lambda s: s.get("players")),
+    "mem": ("Host RAM %", 0.0, 100.0, _mem_pct),
+    "load": ("Load (1m)", 0.0, None, lambda s: s.get("load1")),
+}
+
+
+def cmd_history(ctx: Ctx) -> int:
+    from . import charts
+    samples = metrics.read_samples(ctx.args.n)
+    if not samples:
+        rc.print("[yellow]no samples yet — run `mcctl watch`, `mcctl dash`, or the "
+                 "watchdog to collect history[/yellow]")
+        return 0
+    span = ""
+    ts = [s.get("ts") for s in samples if s.get("ts")]
+    if ts:
+        span = (f"{time.strftime('%m-%d %H:%M', time.localtime(min(ts)))} → "
+                f"{time.strftime('%m-%d %H:%M', time.localtime(max(ts)))}")
+    keys = list(_HISTORY_METRICS) if ctx.args.metric == "all" else [ctx.args.metric]
+    rc.print(f"[bold]{len(samples)} samples[/bold]  [dim]{span}[/dim]\n")
+    drew = False
+    for key in keys:
+        label, lo, hi, fn = _HISTORY_METRICS[key]
+        values = [fn(s) for s in samples]
+        summ = charts.summarize(values)
+        if summ.n == 0:
+            continue
+        drew = True
+        top = hi if hi is not None else max(summ.max * 1.15, 1.0)
+        for row in charts.block_chart(values, lo=lo, hi=top, width=72, height=8):
+            rc.print(f"[green]{row}[/green]")
+        rc.print(f"[bold]{label}[/bold]  "
+                 f"[dim]last[/dim] {summ.last:.1f}  [dim]min[/dim] {summ.min:.1f}  "
+                 f"[dim]avg[/dim] {summ.avg:.1f}  [dim]max[/dim] {summ.max:.1f}  "
+                 f"[dim](scale 0–{top:.0f}, n={summ.n})[/dim]\n")
+    if not drew:
+        rc.print("[yellow]no data for the requested metric(s) in this window[/yellow]")
+    return 0
+
+
+def cmd_trace(ctx: Ctx) -> int:
+    from . import tracer
+    pid = ctx.ctl.find_pid()
+    if not pid:
+        rc.print("[red]server is not running — nothing to trace[/red]")
+        return 1
+    if ctx.args.learn:
+        rc.print(f"[dim]{tracer.EXPLAIN}[/dim]")
+    rc.print(f"[dim]tracing GC on pid {pid} every {ctx.args.interval}ms — Ctrl-C to stop[/dim]")
+    try:
+        for snap, d in tracer.gc_trace(ctx.t, ctx.cfg, pid, interval_ms=ctx.args.interval):
+            ts = time.strftime("%H:%M:%S")
+            line = (f"{ts}  eden [bold]{snap.get('E', 0):5.1f}%[/bold]  "
+                    f"old [bold]{snap.get('O', 0):5.1f}%[/bold]  meta {snap.get('M', 0):5.1f}%")
+            if d and d.young_gcs:
+                line += f"  [yellow]YGC+{d.young_gcs} ({d.young_pause_ms:.1f}ms)[/yellow]"
+            if d and d.full_gcs:
+                line += f"  [bold red]FGC+{d.full_gcs} ({d.full_pause_ms:.0f}ms)[/bold red]"
+            rc.print(line)
+    except KeyboardInterrupt:
+        rc.print("[yellow]stopped[/yellow]")
+    except tracer.TraceError as e:
+        rc.print(f"[red]trace error:[/red] {e}")
+        return 1
     return 0
 
 
@@ -928,7 +1073,26 @@ def build_parser() -> argparse.ArgumentParser:
     ai_.add_argument("question", nargs="*", help="optional extra question")
     aa = asub.add_parser("ask", help="free-form question with server context attached")
     aa.add_argument("question", nargs="+")
+    ach = asub.add_parser("chat", help="interactive multi-turn conversation (Claude or local ollama)")
+    ach.add_argument("question", nargs="*", help="optional opening message")
     sp.set_defaults(func=cmd_ai, ai_cmd=None, question=[], name="", section="host")
+
+    sp = sub.add_parser("watch", help="live one-line status stream (also records metric history)")
+    sp.add_argument("--interval", type=float, default=10.0, help="seconds between samples")
+    sp.add_argument("-n", "--count", type=int, default=0, help="stop after N samples (0 = forever)")
+    sp.set_defaults(func=cmd_watch)
+
+    sp = sub.add_parser("history", help="TPS/MSPT/heap/players charts from local metric history")
+    sp.add_argument("metric", nargs="?", default="tps",
+                    choices=["tps", "mspt", "heap", "players", "mem", "load", "all"])
+    sp.add_argument("-n", type=int, default=240, help="how many recent samples to chart")
+    sp.set_defaults(func=cmd_history)
+
+    sp = sub.add_parser("trace", help="live JVM GC tracer (young/full GC, pauses, heap regions)")
+    sp.add_argument("--interval", type=int, default=1000, help="jstat sample interval (ms)")
+    sp.add_argument("--learn", action="store_true",
+                    help="explain generations, eden/old, and what the pauses mean")
+    sp.set_defaults(func=cmd_trace)
 
     sp = sub.add_parser("dash", help="live TUI dashboard")
     sp.set_defaults(func=cmd_dash)

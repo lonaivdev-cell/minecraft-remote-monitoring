@@ -12,7 +12,7 @@ from mcctl.config import Config
 SUBCOMMANDS = [
     "init", "doctor", "status", "start", "stop", "restart", "kill", "console", "cmd",
     "save", "tps", "health", "profile", "purge", "stats", "logs", "backup", "props",
-    "jvm", "player", "watchdog", "sync", "rcon", "dash",
+    "jvm", "player", "watchdog", "sync", "rcon", "dash", "watch", "history", "trace", "ai",
 ]
 
 
@@ -78,6 +78,32 @@ def test_stats_empty(tmp_path, capsys):
     capsys.readouterr()
     assert cli.main(["stats", "--config", str(cfgfile)]) == 0
     assert "no samples" in capsys.readouterr().out
+
+
+def test_history_empty(tmp_path, capsys):
+    cfgfile = tmp_path / "c.toml"
+    cli.main(["init", "--config", str(cfgfile)])
+    capsys.readouterr()
+    assert cli.main(["history", "--config", str(cfgfile)]) == 0
+    assert "no samples" in capsys.readouterr().out
+
+
+def test_history_charts_recorded_samples(tmp_path, capsys):
+    from mcctl import metrics
+    cfgfile = tmp_path / "c.toml"
+    cli.main(["init", "--config", str(cfgfile)])
+    for tps in (20.0, 19.5, 18.0, 12.0):
+        metrics.append_sample({"ts": 1, "tps": tps, "running": True})
+    capsys.readouterr()
+    assert cli.main(["history", "tps", "--config", str(cfgfile)]) == 0
+    out = capsys.readouterr().out
+    assert "TPS" in out and "last" in out
+
+
+def test_ai_chat_subcommand_parses():
+    args = cli.build_parser().parse_args(["ai", "chat", "why", "is", "tps", "low"])
+    assert args.func.__name__ == "cmd_ai" and args.ai_cmd == "chat"
+    assert args.question == ["why", "is", "tps", "low"]
 
 
 def test_watchdog_arm_disarm(tmp_path, capsys):

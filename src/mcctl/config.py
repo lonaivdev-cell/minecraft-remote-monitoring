@@ -67,10 +67,21 @@ class WatchdogCfg:
 
 @dataclass(slots=True)
 class LlmCfg:
+    provider: str = "anthropic"                           # "anthropic" (Claude API) | "ollama" (local)
     model: str = "claude-opus-4-8"                        # Anthropic model id
     api_key_env: str = "ANTHROPIC_API_KEY"                # env var holding the key (never stored)
     max_tokens: int = 8000                                # per-answer output budget
     log_lines: int = 400                                  # log tail size sent with `mcctl ai logs`
+    ollama_url: str = "http://localhost:11434"            # local ollama server (provider = "ollama")
+    ollama_model: str = "llama3.1"                        # model name as `ollama pull`ed it
+
+
+@dataclass(slots=True)
+class UiCfg:
+    # Log timestamps are shown in this zone; the server writes them in server_timezone.
+    # Defaults convert a UTC OCI box's logs to São Paulo wall-clock for easy reading.
+    timezone: str = "America/Sao_Paulo"                   # display zone (IANA name, or "" to disable)
+    server_timezone: str = "UTC"                          # zone the server's clock/logs use
 
 
 @dataclass(slots=True)
@@ -79,6 +90,7 @@ class Config:
     backup: BackupCfg = field(default_factory=BackupCfg)
     watchdog: WatchdogCfg = field(default_factory=WatchdogCfg)
     llm: LlmCfg = field(default_factory=LlmCfg)
+    ui: UiCfg = field(default_factory=UiCfg)
     path: Path | None = None
 
     # ---------------------------------------------------------------- load
@@ -101,7 +113,7 @@ class Config:
         except (OSError, tomllib.TOMLDecodeError) as e:
             raise ConfigError(f"cannot read {p}: {e}") from e
         for section, dc in (("server", cfg.server), ("backup", cfg.backup),
-                            ("watchdog", cfg.watchdog), ("llm", cfg.llm)):
+                            ("watchdog", cfg.watchdog), ("llm", cfg.llm), ("ui", cfg.ui)):
             data = raw.get(section, {})
             if not isinstance(data, dict):
                 raise ConfigError(f"[{section}] must be a table")
@@ -112,7 +124,7 @@ class Config:
                     continue
                 setattr(dc, k, v)
         for section in raw:
-            if section not in ("server", "backup", "watchdog", "llm"):
+            if section not in ("server", "backup", "watchdog", "llm", "ui"):
                 log.warning("config: unknown section [%s] ignored", section)
         cfg.validate()
         return cfg
@@ -145,18 +157,31 @@ class Config:
         if w.max_restarts < 1:
             problems.append("watchdog.max_restarts must be >= 1")
         llm = self.llm
+        if llm.provider not in ("anthropic", "ollama"):
+            problems.append("llm.provider must be 'anthropic' or 'ollama'")
         if not llm.model:
             problems.append("llm.model must not be empty")
         if not (256 <= llm.max_tokens <= 64000):
             problems.append("llm.max_tokens must be in [256, 64000]")
         if llm.log_lines < 10:
             problems.append("llm.log_lines must be >= 10")
+        if llm.provider == "ollama" and not llm.ollama_model:
+            problems.append("llm.ollama_model must not be empty when provider = 'ollama'")
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+        for key, tz in (("ui.timezone", self.ui.timezone),
+                        ("ui.server_timezone", self.ui.server_timezone)):
+            if tz:  # "" disables conversion for that side
+                try:
+                    ZoneInfo(tz)
+                except (ZoneInfoNotFoundError, ValueError, ModuleNotFoundError):
+                    problems.append(f"{key}={tz!r} is not a known IANA timezone")
         if problems:
             raise ConfigError("invalid config:\n  - " + "\n  - ".join(problems))
 
     def to_dict(self) -> dict:
         return {"server": asdict(self.server), "backup": asdict(self.backup),
-                "watchdog": asdict(self.watchdog), "llm": asdict(self.llm)}
+                "watchdog": asdict(self.watchdog), "llm": asdict(self.llm),
+                "ui": asdict(self.ui)}
 
 
 # ---------------------------------------------------------------- template
@@ -224,14 +249,29 @@ notify_desktop = true
 webhook_url = ""
 
 [llm]
-# AI log/crash/mod analysis (`mcctl ai …`, GUI "AI" page). Needs the optional
-# `anthropic` package and an API key in the environment — mcctl stores no keys.
+# AI log/crash/mod analysis & chat (`mcctl ai …`, GUI "AI"/"Chat" pages).
+# provider = "anthropic" -> Claude API (needs the optional `anthropic` package
+#                           and an API key in the environment; mcctl stores no keys).
+# provider = "ollama"    -> a local LLM served by ollama (no API key, no data leaves
+#                           the box). Nothing extra to install — mcctl talks HTTP.
+provider = "anthropic"
+# Anthropic model id (provider = "anthropic").
 model = "claude-opus-4-8"
 api_key_env = "ANTHROPIC_API_KEY"
 # Output budget per answer (input is whatever context fits the analysis).
 max_tokens = 8000
 # How many latest.log lines `mcctl ai logs` sends as context.
 log_lines = 400
+# Local ollama server + model (provider = "ollama"). Run `ollama pull <model>` first.
+ollama_url = "http://localhost:11434"
+ollama_model = "llama3.1"
+
+[ui]
+# Log timestamps are rewritten from server_timezone into timezone for display,
+# so a UTC server's logs read in your local wall-clock. IANA names; set timezone
+# to "" to show raw server time. Defaults: UTC server -> São Paulo (UTC-3).
+timezone = "America/Sao_Paulo"
+server_timezone = "UTC"
 """
 
 
