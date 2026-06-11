@@ -28,7 +28,10 @@ mcctl init  →  mcctl doctor  →  mcctl start  →  mcctl dash
 | `mcctl status [--json] [--fast]` | process/tmux/port/players/TPS/heap/host RAM/disk/backup age, one screen |
 | `mcctl start` / `stop` / `restart` | tmux + `start.sh` boot with readiness detection; graceful stop: player countdown → `save-all flush` → `stop` → SIGTERM → SIGKILL escalation |
 | `mcctl dash` | live TUI: TPS sparkline, heap/RAM gauges, log tail; keys for save/backup/purge/start/stop |
-| `mcctl gui` / `mcctl-gui` | native GTK4/libadwaita desktop app (sidebar, 14 pages): live status & actions, console, logs, players, backups, mods, OS/JVM inspector (learn mode), AI analysis, doctor with safe fixes, validated server.properties editor, JVM settings, crash reports + evidence bundles, spark profiler, config sync |
+| `mcctl gui` / `mcctl-gui` | native GTK4/libadwaita desktop app (sidebar, 16 pages): live status & actions, TPS/heap/players history charts, console, logs, players, backups, mods, OS/JVM inspector (learn mode), AI analysis, AI chat, doctor with safe fixes, validated server.properties editor, JVM settings, crash reports + evidence bundles, spark profiler, config sync |
+| `mcctl watch` | line-oriented live monitor: one compact status line per interval (state/players/TPS/MSPT/heap/RAM/load), scrollable and greppable; records metric history as it runs |
+| `mcctl history [tps\|mspt\|heap\|players\|mem\|load\|all]` | terminal charts of recorded metric history with min/avg/max/last summaries |
+| `mcctl trace [--learn]` | live JVM GC tracer (`jstat -gcutil`): young/full collections, pause times, eden/old/metaspace occupancy — watch how the JVM manages memory, with a learn-mode walkthrough |
 | `mcctl backup [create\|list\|prune\|pull\|verify\|restore]` | consistent snapshots (`save-off` → flush → tar+zstd → verify → `save-on` guaranteed), GFS rotation, rsync pull, safe restore |
 | `mcctl save` | `save-all flush` with confirmation; `--skip-if-down` for timers |
 | `mcctl watchdog [run\|arm\|disarm\|status\|install]` | self-healing daemon: crash restart with backoff, freeze detection (stale log + dead console → thread dump → restart), crash-loop breaker, TPS/heap/disk/SSH alerts |
@@ -38,10 +41,10 @@ mcctl init  →  mcctl doctor  →  mcctl start  →  mcctl dash
 | `mcctl jvm [show\|heap 12G\|java PATH]` | `variables.txt` editor — rewrites Xms/Xmx, preserves Aikar's flags |
 | `mcctl player …` | list, whitelist add/remove/on/off, op/deop, kick/ban/pardon |
 | `mcctl cmd <anything>` / `console` | arbitrary console commands; `console` attaches to the live tmux (detach: `Ctrl-b d`) |
-| `mcctl logs [-f] [crash]` | tail/follow `latest.log`; list/fetch crash reports (escape-sequence-sanitized) |
+| `mcctl logs [-f] [crash]` | tail/follow `latest.log` (timestamps auto-converted to your `[ui].timezone`, default São Paulo); list/fetch crash reports (escape-sequence-sanitized) |
 | `mcctl inspect [SECTION] [--learn]` | deep OS/JVM introspection: process tree, /proc internals, every JVM thread, memory maps, fds, sockets, environment, jcmd flags/heap, host PSI — each section has a `--learn` walkthrough explaining what the kernel structures mean |
 | `mcctl mods` | list every mod with id/version/size, metadata read from inside each jar (NeoForge/Forge/Fabric descriptors) |
-| `mcctl ai [logs\|crash\|mods\|inspect\|ask]` | Claude-powered analysis: review logs, root-cause crash reports, explain what the mods do, teacher-mode walkthroughs of inspector output, free-form questions with server context |
+| `mcctl ai [logs\|crash\|mods\|inspect\|ask\|chat]` | AI analysis & multi-turn chat, powered by **Claude or a local LLM via ollama** (`[llm].provider`): review logs, root-cause crash reports, explain what the mods do, teacher-mode walkthroughs, free-form questions, and an interactive `chat` session — all with live server context attached |
 | `mcctl stats` | local JSONL metrics history (TPS, MSPT, heap, RAM, players) |
 | `mcctl sync --pull/--push` | rsync the `config/` dir — the Better Compatibility Checker mismatch fix |
 | `mcctl doctor [--fix]` | end-to-end preflight; encodes the hard-won knowledge (below) |
@@ -66,7 +69,10 @@ sudo pacman -S --needed gtk4 libadwaita python-gobject
 mcctl-gui   # or `mcctl gui`, or launch it from the app grid
 ```
 
-For AI analysis (optional — powers `mcctl ai` and the GUI's AI page):
+For AI analysis & chat (optional — powers `mcctl ai`, the GUI's AI and Chat
+pages). Pick **one** backend under `[llm]` in the config:
+
+**Claude (cloud)** — `provider = "anthropic"` (default):
 
 ```fish
 sudo pacman -S python-anthropic       # or: pipx inject mcctl anthropic
@@ -74,10 +80,21 @@ set -Ux ANTHROPIC_API_KEY sk-ant-…    # mcctl never stores the key itself
 mcctl ai logs                         # sanity check
 ```
 
-Model and limits live under `[llm]` in the config. Everything sent to the API
-is secret-redacted (rcon.password, token-looking env values) and wrapped as
-untrusted data — the system prompt explicitly refuses instructions embedded in
-logs, because this modpack's crash logs are known to carry prompt-injection text.
+**Local LLM (ollama)** — `provider = "ollama"`, nothing leaves the box and no
+API key is involved (mcctl talks ollama's HTTP API directly — no extra package):
+
+```fish
+ollama serve &                        # the local model server
+ollama pull llama3.1                  # set [llm].ollama_model to match
+# in ~/.config/mcctl/config.toml: [llm] provider = "ollama"
+mcctl ai logs                         # sanity check
+mcctl ai chat                         # interactive conversation
+```
+
+Whichever backend you pick, everything sent to it is secret-redacted
+(rcon.password, token-looking env values) and wrapped as untrusted data — the
+system prompt explicitly refuses instructions embedded in logs, because this
+modpack's crash logs are known to carry prompt-injection text.
 
 **Anywhere else:** `pipx install .` then `mcctl watchdog install` for the user units.
 
@@ -167,7 +184,10 @@ src/mcctl/
 ├── doctor.py     preflight checks + safe fixes
 ├── inspector.py  deep OS/JVM introspection (/proc, threads, maps, fds, jcmd) + learn-mode texts
 ├── mods.py       mod inventory — descriptors read from inside the jars, one round-trip
-├── llm.py        Claude analysis (optional `anthropic` dep): redaction, data envelopes, streaming
+├── llm.py        AI analysis & chat: Anthropic + ollama backends, redaction, data envelopes, streaming
+├── tracer.py     JVM GC tracer — jstat -gcutil parsing (pure) + one streaming round-trip
+├── charts.py     terminal charting primitives (sparklines, block charts) — pure
+├── watch.py      `mcctl watch` line-oriented live monitor + metric recorder
 ├── dash.py       rich Live dashboard
 ├── gui.py        GUI launcher: dependency check, friendly pacman hint
 ├── gui_app.py    GTK4 + libadwaita desktop app (single worker thread for SSH)

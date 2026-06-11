@@ -1,7 +1,7 @@
 # Maintainer: CarborioLand <lorenzods.ls1@gmail.com>
 # Local/dev PKGBUILD: build straight from this checkout with `makepkg -si`.
 pkgname=mcctl
-pkgver=0.3.0
+pkgver=0.4.0
 pkgrel=1
 pkgdesc="Remote control & monitoring for a modded Minecraft server over SSH (tmux + ServerStarterJar launch model)"
 arch=('any')
@@ -15,7 +15,8 @@ optdepends=(
     'zstd: local verification of pulled backup archives'
     'tmux: integration tests / local transport mode'
     'python-gobject: GTK desktop app (mcctl-gui)'
-    'python-anthropic: AI log/crash/mod analysis (mcctl ai)'
+    'python-anthropic: AI analysis & chat via Claude (mcctl ai; or use a local ollama instead)'
+    'ollama: local LLM backend for AI analysis & chat ([llm].provider = "ollama")'
     'gtk4: GTK desktop app (mcctl-gui)'
     'libadwaita: GTK desktop app (mcctl-gui)'
 )

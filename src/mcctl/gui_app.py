@@ -153,6 +153,12 @@ class Window(Adw.ApplicationWindow):
         self._evidence_rows: list[Gtk.Widget] = []
         self._crashes_refreshing = False
         self._profiler_running = False
+        self._chat_messages: list[dict] = []
+        self._chat_running = False
+        self._history_values: list[float | None] = []
+        self._history_lo = 0.0
+        self._history_hi = 20.0
+        self._history_refreshing = False
 
         self._build_ui()
 
@@ -166,11 +172,12 @@ class Window(Adw.ApplicationWindow):
     # ------------------------------------------------------------------ UI
 
     def _build_ui(self) -> None:
-        # 14 pages: a sidebar scales where a view switcher can't
+        # 16 pages: a sidebar scales where a view switcher can't
         self.stack = Gtk.Stack(vexpand=True, hexpand=True,
                                transition_type=Gtk.StackTransitionType.CROSSFADE)
         for builder, name, title in (
             (self._build_overview, "overview", "Overview"),
+            (self._build_history, "history", "History"),
             (self._build_console, "console", "Console"),
             (self._build_logs, "logs", "Logs"),
             (self._build_players, "players", "Players"),
@@ -178,6 +185,7 @@ class Window(Adw.ApplicationWindow):
             (self._build_mods, "mods", "Mods"),
             (self._build_inspect, "inspect", "Inspect"),
             (self._build_ai, "ai", "AI"),
+            (self._build_chat, "chat", "Chat"),
             (self._build_doctor, "doctor", "Doctor"),
             (self._build_props, "props", "Properties"),
             (self._build_jvm, "jvm", "JVM"),
@@ -231,7 +239,11 @@ class Window(Adw.ApplicationWindow):
         self.badge_sub.add_css_class("dim-label")
         box.append(self.badge_sub)
 
-        actions = Gtk.Box(spacing=8, halign=Gtk.Align.CENTER)
+        # FlowBox so the action pills reflow onto another row on narrow windows
+        # instead of overflowing the clamp and clipping their labels.
+        actions = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, homogeneous=True,
+                              column_spacing=8, row_spacing=8, halign=Gtk.Align.CENTER,
+                              min_children_per_line=2, max_children_per_line=6)
         self.btn_start = self._pill("Start", self._act_start, "suggested-action")
         self.btn_stop = self._pill("Stop", self._act_stop, "destructive-action")
         self.btn_restart = self._pill("Restart", self._act_restart)
@@ -390,7 +402,7 @@ class Window(Adw.ApplicationWindow):
     def _build_ai(self) -> Gtk.Widget:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6,
                       margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
-        ok, reason = llm.available()
+        ok, reason = llm.available(self.remote.cfg)
         if not ok:
             note = Gtk.Label(label=f"AI analysis is unavailable:\n{reason}",
                              halign=Gtk.Align.START, selectable=True)
@@ -411,8 +423,8 @@ class Window(Adw.ApplicationWindow):
         self.ai_run.set_sensitive(ok)
         row.append(self.ai_run)
         box.append(row)
-        hint = Gtk.Label(label=f"Model: {self.remote.cfg.llm.model} · logs/crash text is "
-                               "secret-redacted and sent as untrusted data only.",
+        hint = Gtk.Label(label=f"Model: {llm.provider_label(self.remote.cfg)} · logs/crash text "
+                               "is secret-redacted and sent as untrusted data only.",
                          halign=Gtk.Align.START)
         hint.add_css_class("dim-label")
         hint.add_css_class("caption")
@@ -421,6 +433,71 @@ class Window(Adw.ApplicationWindow):
         self.ai_view.set_monospace(False)
         self.ai_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
         box.append(Gtk.ScrolledWindow(child=self.ai_view, vexpand=True))
+        return box
+
+    def _build_chat(self) -> Gtk.Widget:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6,
+                      margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
+        ok, reason = llm.available(self.remote.cfg)
+        if not ok:
+            note = Gtk.Label(label=f"Chat is unavailable:\n{reason}",
+                             halign=Gtk.Align.START, selectable=True)
+            note.add_css_class("dim-label")
+            box.append(note)
+        self.chat_view = self._textview()
+        self.chat_view.set_monospace(False)
+        self.chat_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        box.append(Gtk.ScrolledWindow(child=self.chat_view, vexpand=True))
+        row = Gtk.Box(spacing=6)
+        self.chat_entry = Gtk.Entry(
+            placeholder_text="Ask anything — the live server status & log are attached",
+            hexpand=True)
+        self.chat_entry.connect("activate", self._on_chat_send)
+        self.chat_entry.set_sensitive(ok)
+        self.chat_send = Gtk.Button(label="Send")
+        self.chat_send.add_css_class("suggested-action")
+        self.chat_send.connect("clicked", self._on_chat_send)
+        self.chat_send.set_sensitive(ok)
+        new_btn = Gtk.Button(label="New", tooltip_text="Start a fresh conversation")
+        new_btn.connect("clicked", self._on_chat_new)
+        row.append(self.chat_entry)
+        row.append(self.chat_send)
+        row.append(new_btn)
+        box.append(row)
+        hint = Gtk.Label(label=f"{llm.provider_label(self.remote.cfg)} · multi-turn; context is "
+                               "secret-redacted and sent as untrusted data only.",
+                         halign=Gtk.Align.START)
+        hint.add_css_class("dim-label")
+        hint.add_css_class("caption")
+        box.append(hint)
+        return box
+
+    def _build_history(self) -> Gtk.Widget:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8,
+                      margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
+        row = Gtk.Box(spacing=8)
+        self.history_keys = ["tps", "mspt", "heap", "players", "mem", "load"]
+        self.history_drop = Gtk.DropDown.new_from_strings(
+            ["TPS", "MSPT (ms)", "Heap %", "Players", "Host RAM %", "Load (1m)"])
+        self.history_drop.connect("notify::selected", lambda *_: self._refresh_history())
+        row.append(self.history_drop)
+        refresh = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Reload history")
+        refresh.connect("clicked", lambda *_: self._refresh_history())
+        row.append(refresh)
+        box.append(row)
+        hint = Gtk.Label(label="Recorded by the watchdog, `mcctl watch`, this app, and `mcctl dash`.",
+                         halign=Gtk.Align.START)
+        hint.add_css_class("dim-label")
+        hint.add_css_class("caption")
+        box.append(hint)
+        self.history_area = Gtk.DrawingArea(vexpand=True, hexpand=True)
+        self.history_area.set_size_request(-1, 260)
+        self.history_area.set_draw_func(self._draw_history)
+        frame = Gtk.Frame(child=self.history_area)
+        box.append(frame)
+        self.history_summary = Gtk.Label(label="—", halign=Gtk.Align.START, selectable=True)
+        self.history_summary.add_css_class("dim-label")
+        box.append(self.history_summary)
         return box
 
     def _build_doctor(self) -> Gtk.Widget:
@@ -614,7 +691,16 @@ class Window(Adw.ApplicationWindow):
         GLib.idle_add(go)
 
     def _toast(self, msg: str, timeout: int = 4) -> None:
-        self.toasts.add_toast(Adw.Toast(title=msg, timeout=timeout))
+        # Adw.Toast titles are Pango markup: a stray '&' or '<' in a backup name,
+        # server reply, or error message would fail to parse and render blank.
+        # Disable markup where supported; otherwise escape the text.
+        toast = Adw.Toast(timeout=timeout)
+        if hasattr(toast, "set_use_markup"):
+            toast.set_use_markup(False)
+            toast.set_title(msg)
+        else:
+            toast.set_title(GLib.markup_escape_text(msg))
+        self.toasts.add_toast(toast)
 
     def _confirm(self, heading: str, body: str, action_label: str, on_confirm) -> None:
         dlg = Adw.AlertDialog(heading=heading, body=body)
@@ -665,7 +751,9 @@ class Window(Adw.ApplicationWindow):
 
     def _refresh_aux(self) -> None:
         page = self.stack.get_visible_child_name()
-        if page == "logs":
+        if page == "history":
+            self._refresh_history()
+        elif page == "logs":
             self._refresh_logs()
         elif page == "players":
             self._refresh_players()
@@ -823,7 +911,7 @@ class Window(Adw.ApplicationWindow):
         self._ai_analyze("inspect", [llm.envelope(f"inspect-{section}", text)], "")
 
     def _on_ai_run(self, *_):
-        ok, reason = llm.available()
+        ok, reason = llm.available(self.remote.cfg)
         if not ok:
             self._toast(reason.splitlines()[0])
             return
@@ -862,7 +950,8 @@ class Window(Adw.ApplicationWindow):
             return
         self._ai_running = True
         self.ai_run.set_sensitive(False)
-        self.ai_view.get_buffer().set_text(f"Gathering context, asking {self.remote.cfg.llm.model}…\n\n")
+        self.ai_view.get_buffer().set_text(
+            f"Gathering context, asking {llm.provider_label(self.remote.cfg)}…\n\n")
         first_chunk = [True]
 
         def stream_chunk(s: str):
@@ -881,11 +970,11 @@ class Window(Adw.ApplicationWindow):
 
         def done(_text):
             self._ai_running = False
-            self.ai_run.set_sensitive(llm.available()[0])
+            self.ai_run.set_sensitive(llm.available(self.remote.cfg)[0])
 
         def err(e: Exception):
             self._ai_running = False
-            self.ai_run.set_sensitive(llm.available()[0])
+            self.ai_run.set_sensitive(llm.available(self.remote.cfg)[0])
             self.ai_view.get_buffer().set_text(f"Analysis failed:\n{e}")
 
         self.worker.submit(job, done, err)
@@ -894,6 +983,151 @@ class Window(Adw.ApplicationWindow):
         buf = view.get_buffer()
         buf.insert(buf.get_end_iter(), text)
         self._scroll_to_end(view)
+
+    # ------------------------------------------------------------- chat page
+
+    def _on_chat_new(self, *_):
+        self._chat_messages = []
+        self.chat_view.get_buffer().set_text("")
+        self._toast("New conversation")
+
+    def _on_chat_send(self, *_):
+        text = self.chat_entry.get_text().strip()
+        if not text or self._chat_running:
+            return
+        ok, reason = llm.available(self.remote.cfg)
+        if not ok:
+            self._toast(reason.splitlines()[0])
+            return
+        self.chat_entry.set_text("")
+        self._append_text(self.chat_view, f"you> {text}")
+        self._chat_running = True
+        self.chat_send.set_sensitive(False)
+        first = not self._chat_messages
+        marker = [True]
+
+        def stream_chunk(s: str):
+            def apply():
+                if marker[0]:
+                    marker[0] = False
+                    self._append_text_raw(
+                        self.chat_view, f"\n{llm.provider_label(self.remote.cfg)}> ")
+                self._append_text_raw(self.chat_view, s)
+                return False
+            GLib.idle_add(apply)
+
+        def job():
+            if first:
+                ctx = [llm.status_envelope(self.remote.ctl),
+                       llm.envelope("latest.log tail", logs.tail(self.remote.t, self.remote.cfg, 120))]
+                content = ("You are in an interactive session with the server operator. Use the "
+                           "attached current server context when relevant.\n\n"
+                           + "\n\n".join(ctx) + f"\n\nOperator: {text}")
+            else:
+                content = text
+            self._chat_messages.append({"role": "user", "content": content})
+            reply = llm.Analyst(self.remote.cfg).chat(self._chat_messages, on_text=stream_chunk)
+            self._chat_messages.append({"role": "assistant", "content": reply})
+            return None
+
+        def done(_):
+            self._chat_running = False
+            self.chat_send.set_sensitive(True)
+            self._append_text_raw(self.chat_view, "\n")
+
+        def err(e: Exception):
+            self._chat_running = False
+            self.chat_send.set_sensitive(True)
+            # drop the half-sent user turn so the next send isn't poisoned
+            if self._chat_messages and self._chat_messages[-1]["role"] == "user":
+                self._chat_messages.pop()
+            self._append_text_raw(self.chat_view, f"\n[error: {e}]\n")
+
+        self.worker.submit(job, done, err)
+
+    # ------------------------------------------------------------- history page
+
+    @staticmethod
+    def _history_value(key: str, s: dict):
+        if key == "heap":
+            used, total = s.get("heap_used"), s.get("heap_max") or s.get("heap_committed")
+            return 100.0 * used / total if used and total else None
+        if key == "mem":
+            used, total = s.get("mem_used"), s.get("mem_total")
+            return 100.0 * used / total if used and total else None
+        return s.get({"tps": "tps", "mspt": "mspt", "players": "players", "load": "load1"}[key])
+
+    def _refresh_history(self) -> None:
+        if self._history_refreshing:
+            return
+        self._history_refreshing = True
+        key = self.history_keys[self.history_drop.get_selected()]
+        labels = {"tps": "TPS", "mspt": "MSPT (ms)", "heap": "Heap %",
+                  "players": "Players", "mem": "Host RAM %", "load": "Load (1m)"}
+        fixed_hi = {"tps": 20.0, "heap": 100.0, "mem": 100.0}
+
+        def job():
+            samples = metrics.read_samples(720)
+            return [self._history_value(key, s) for s in samples]
+
+        def done(values):
+            self._history_refreshing = False
+            from . import charts
+            summ = charts.summarize(values)
+            self._history_lo = 0.0
+            self._history_values = values
+            if summ.n == 0:
+                self._history_hi = 1.0
+                self.history_summary.set_label("no samples yet — run `mcctl watch` or the watchdog")
+            else:
+                self._history_hi = fixed_hi.get(key) or max(summ.max * 1.15, 1.0)
+                self.history_summary.set_label(
+                    f"{labels[key]}   last {summ.last:.1f}   min {summ.min:.1f}   "
+                    f"avg {summ.avg:.1f}   max {summ.max:.1f}   (n={summ.n})")
+            self.history_area.queue_draw()
+
+        def err(e: Exception):
+            self._history_refreshing = False
+            self.history_summary.set_label(f"history unavailable: {e}"[:200])
+
+        self.worker.submit(job, done, err)
+
+    def _draw_history(self, _area, cr, width, height, *_) -> None:
+        values = self._history_values
+        lo, hi = self._history_lo, self._history_hi
+        pad = 10.0
+        span = max(hi - lo, 1e-9)
+        plot_w, plot_h = max(1.0, width - 2 * pad), max(1.0, height - 2 * pad)
+        cr.set_source_rgba(0.5, 0.5, 0.5, 0.08)
+        cr.rectangle(0, 0, width, height)
+        cr.fill()
+        # horizontal gridlines at 0 / 50% / 100% of the scale
+        cr.set_line_width(1.0)
+        for frac in (0.0, 0.5, 1.0):
+            y = pad + plot_h * (1.0 - frac)
+            cr.set_source_rgba(0.5, 0.5, 0.5, 0.25)
+            cr.move_to(pad, y)
+            cr.line_to(width - pad, y)
+            cr.stroke()
+        present = [v for v in values if v is not None]
+        if not present:
+            return
+        n = len(values)
+        cr.set_source_rgba(0.20, 0.70, 0.40, 1.0)
+        cr.set_line_width(2.0)
+        started = False
+        for i, v in enumerate(values):
+            if v is None:
+                started = False
+                continue
+            x = pad + (plot_w * i / (n - 1) if n > 1 else plot_w / 2)
+            y = pad + plot_h * (1.0 - (max(lo, min(hi, v)) - lo) / span)
+            if started:
+                cr.line_to(x, y)
+            else:
+                cr.move_to(x, y)
+                started = True
+        cr.stroke()
 
     # ------------------------------------------------------------- doctor
 

@@ -1,5 +1,6 @@
 """llm: payload hygiene + prompt plumbing. No network, no anthropic needed."""
 
+import json
 import sys
 import types
 
@@ -54,13 +55,94 @@ def test_analyst_missing_key_message(monkeypatch):
     # a fake anthropic module so the import works without the dependency
     monkeypatch.setitem(sys.modules, "anthropic", types.ModuleType("anthropic"))
     with pytest.raises(llm.LlmError, match="MCCTL_TEST_KEY"):
-        llm.Analyst(cfg)._client()
+        llm.Analyst(cfg).backend._client()
 
 
 def test_available_reports_missing_package(monkeypatch):
     monkeypatch.setitem(sys.modules, "anthropic", None)  # import raises ImportError
     ok, reason = llm.available()
     assert not ok and "anthropic" in reason
+
+
+# ---------------------------------------------------------------- provider routing
+
+def test_active_model_and_provider_label():
+    cfg = Config()
+    assert llm.active_model(cfg) == "claude-opus-4-8"
+    assert llm.provider_label(cfg) == "claude-opus-4-8"
+    cfg.llm.provider = "ollama"
+    cfg.llm.ollama_model = "llama3.1"
+    assert llm.active_model(cfg) == "llama3.1"
+    assert "ollama" in llm.provider_label(cfg)
+
+
+def test_ollama_available_without_anthropic(monkeypatch):
+    # ollama has no client-side dependency; it must be usable even with anthropic absent
+    monkeypatch.setitem(sys.modules, "anthropic", None)
+    cfg = Config()
+    cfg.llm.provider = "ollama"
+    ok, reason = llm.available(cfg)
+    assert ok and reason == ""
+
+
+def test_backend_selection():
+    cfg = Config()
+    assert isinstance(llm.Analyst(cfg).backend, llm._AnthropicBackend)
+    cfg.llm.provider = "ollama"
+    assert isinstance(llm.Analyst(cfg).backend, llm._OllamaBackend)
+
+
+def test_ollama_stream_parses_ndjson_and_sends_system(monkeypatch):
+    """The ollama backend posts the hardened system prompt and reassembles the
+    streamed NDJSON chunks — exercised without a real server."""
+    import io
+
+    cfg = Config()
+    cfg.llm.provider = "ollama"
+    captured = {}
+
+    class FakeResp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_urlopen(req, timeout=0):
+        captured["url"] = req.full_url
+        captured["body"] = json.loads(req.data.decode())
+        lines = [
+            b'{"message":{"role":"assistant","content":"all "}}\n',
+            b'{"message":{"role":"assistant","content":"good"}}\n',
+            b'{"done":true}\n',
+        ]
+        return FakeResp(b"".join(lines))
+
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    chunks = []
+    out = llm.Analyst(cfg).analyze("ask", ["<data>x</data>"], question="hi",
+                                   on_text=chunks.append)
+    assert out == "all good"
+    assert chunks == ["all ", "good"]
+    assert captured["url"].endswith("/api/chat")
+    assert captured["body"]["model"] == "llama3.1"
+    assert captured["body"]["messages"][0]["role"] == "system"
+    assert "UNTRUSTED" in captured["body"]["messages"][0]["content"]
+
+
+def test_ollama_connection_error_is_actionable(monkeypatch):
+    cfg = Config()
+    cfg.llm.provider = "ollama"
+    import urllib.error
+    import urllib.request
+
+    def boom(req, timeout=0):
+        raise urllib.error.URLError("refused")
+
+    monkeypatch.setattr(urllib.request, "urlopen", boom)
+    with pytest.raises(llm.LlmError, match="ollama serve"):
+        llm.Analyst(cfg).chat([{"role": "user", "content": "hi"}])
 
 
 def test_system_prompt_hardens_against_injection():

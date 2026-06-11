@@ -48,9 +48,25 @@ def test_unknown_keys_ignored(tmp_path: Path):
     ("[backup]\ncompression = 'xz'", "compression"),
     ("[backup]\nkeep_recent = 0", "keep_recent"),
     ("[watchdog]\ninterval = 1", "interval"),
+    ("[llm]\nprovider = 'openai'", "provider"),
+    ("[ui]\ntimezone = 'Mars/Olympus'", "timezone"),
 ])
 def test_validation_errors(tmp_path: Path, snippet: str, msg: str):
     p = tmp_path / "c.toml"
     p.write_text(snippet + "\n")
     with pytest.raises(ConfigError, match=msg):
         Config.load(p)
+
+
+def test_ollama_provider_config(tmp_path: Path):
+    p = tmp_path / "c.toml"
+    p.write_text("[llm]\nprovider = 'ollama'\nollama_model = 'mistral'\n")
+    cfg = Config.load(p)
+    assert cfg.llm.provider == "ollama"
+    assert cfg.llm.ollama_model == "mistral"
+
+
+def test_ui_timezone_defaults():
+    cfg = Config()
+    assert cfg.ui.timezone == "America/Sao_Paulo"
+    assert cfg.ui.server_timezone == "UTC"
