@@ -52,7 +52,7 @@ mcctl init  →  mcctl doctor  →  mcctl start  →  mcctl dash
 | `mcctl metrics export [--cat]` | Prometheus textfile exporter from `metrics.jsonl` for node_exporter → Grafana (atomic write; ships with `mcctl-metrics.timer`) |
 | `mcctl notify-test` | fire a test alert through every configured sink (desktop, Discord webhook, ntfy push) |
 | `mcctl postmortem [--crash NAME]` | deterministic "what went wrong" — parses the newest crash report structurally (exception class, suspected mod + jar, prompt-injection flagging), folds in watchdog events/restart history and evidence bundles; no AI, no API key (`mcctl ai crash` stays the deep dive) |
-| `mcctl doctor [--fix]` | end-to-end preflight; encodes the hard-won knowledge (below), incl. the post-incident "ops" checks: exactly one restart authority (watchdog ⇄ systemd `Restart=` ⇄ start.sh `RESTART` loop), legacy watchdog detection, fstab `nofail` on the data volume |
+| `mcctl doctor [--fix]` | end-to-end preflight; encodes the hard-won knowledge (below), incl. the post-incident "ops" checks: exactly one restart authority (watchdog ⇄ systemd `Restart=` ⇄ start.sh `RESTART` loop), legacy watchdog detection, fstab `nofail` on the data volume, single-brain placement + linger (one watchdog, on the box — [DESIGN-BRAIN.md](DESIGN-BRAIN.md)) |
 
 ## Install
 
@@ -132,6 +132,13 @@ mcctl watchdog arm                                     # actually allow healing
 loginctl enable-linger $USER                           # keep units running after logout
 ```
 
+**Where these units run:** the decided target topology is **on the box**
+(mcctl installed there with `transport = "local"`, linger enabled) so the
+watchdog, the desktop, and the phone all share one desired/events truth —
+[DESIGN-BRAIN.md](DESIGN-BRAIN.md) is the decision record and migration plan.
+`mcctl doctor` warns when watchdog daemons run on both ends (`ops: brain
+placement`) and when the brain host lacks linger (`ops: brain linger`).
+
 ### Self-healing semantics (read once)
 
 | State | Meaning |
@@ -182,6 +189,7 @@ crash report) land in `~/.local/state/mcctl/crashes/` before every heal.
 | Exactly ONE restart authority, or healers fight (2026-06-11 outage) | doctor `ops:` checks (systemd `Restart=`, legacy watchdog, start.sh `RESTART` loop) |
 | A data volume without `nofail` hangs boot with SSH down | doctor `ops: fstab nofail` |
 | Never reboot the VM for a server problem — diagnose the process | `mcctl postmortem`, `mcctl logs crash`, bounded stop escalation in `mcctl stop` |
+| Exactly ONE brain: watchdog + desired/events state live on the box; every face renders it | [DESIGN-BRAIN.md](DESIGN-BRAIN.md), doctor `ops: brain placement` / `ops: brain linger` |
 
 ## Architecture
 
@@ -283,3 +291,8 @@ CI runs lint + both suites on every push.
 > `events.subscribe` give it a push-style stream, and the ntfy bridge already
 > delivers watchdog alerts to a phone. The app is now a thin client over a
 > tested brain — see [DESIGN-0.5.0.md](DESIGN-0.5.0.md).
+> **Where that brain lives is decided (2026-06-11):** on the OCI box, as
+> systemd user units with linger — so the phone, the desktop, and the watchdog
+> share one desired/events truth instead of split-braining.
+> [DESIGN-BRAIN.md](DESIGN-BRAIN.md) is the record; the migration (Phase 0.5,
+> v0.6.0) gates Phase 1.

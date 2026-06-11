@@ -8,9 +8,11 @@ bind fixes, ServerStarterJar force-fetch, and "verify by process AND session".
 from __future__ import annotations
 
 import enum
+import getpass
 import secrets
 import shutil
 import socket
+import subprocess
 from dataclasses import dataclass
 
 from . import props as propsmod
@@ -233,7 +235,9 @@ def _ops_checks(cfg: Config, t: BaseTransport, *, fix: bool) -> list[CheckResult
     """The 2026-06-11 incident distilled: a mod crash must stay a *process*
     problem. That requires exactly ONE restart authority and a box that boots
     even when a data volume is missing. Each check below kills one rung of
-    that incident's escalation ladder."""
+    that incident's escalation ladder — including the same invariant at
+    machine scope: exactly one brain (watchdog + state), on the box, with
+    linger so it outlives logins (DESIGN-BRAIN.md)."""
     from . import state as statemod
     out: list[CheckResult] = []
     s = cfg.server
@@ -302,4 +306,97 @@ def _ops_checks(cfg: Config, t: BaseTransport, *, fix: bool) -> list[CheckResult
         elif opts:
             out.append(_ok("ops: fstab nofail", mnt))
 
+    # the brain — watchdog + state — must live on exactly ONE machine, the box
+    # (DESIGN-BRAIN.md): two daemons with separate desired/armed files fight
+    # exactly like two restart authorities did, just across machines.
+    local_wd = _local_watchdog_active()
+    if s.transport == "ssh":
+        r = t.run("pgrep -af 'mcctl watchdog run' 2>/dev/null | grep -v pgrep || true",
+                  timeout=15)
+        box_wd = bool(r.out.strip())
+        if box_wd and local_wd:
+            out.append(_warn("ops: brain placement",
+                             "mcctl watchdog daemons on BOTH this machine and the box — two "
+                             "brains with separate desired/armed state will fight over restarts",
+                             "keep one (the box, per DESIGN-BRAIN.md): on the other, run "
+                             "`mcctl watchdog disarm` and `systemctl --user disable --now "
+                             "mcctl-watchdog.service`"))
+        elif box_wd:
+            out.append(_ok("ops: brain placement",
+                           "watchdog runs on the box (target topology — DESIGN-BRAIN.md)"))
+            linger = _parse_linger(t.run(
+                f"loginctl show-user {q(s.user)} --property=Linger 2>/dev/null || true",
+                timeout=15).out)
+            lr = _linger_result(linger, s.user)
+            if lr:
+                out.append(lr)
+        elif local_wd:
+            out.append(_ok("ops: brain placement",
+                           "watchdog runs on this machine (client-brain topology; the target "
+                           "is brain-on-box — DESIGN-BRAIN.md §6)"))
+        else:
+            out.append(_warn("ops: brain placement",
+                             "no mcctl watchdog daemon running on either machine — "
+                             "self-healing is off",
+                             "enable it on the box (DESIGN-BRAIN.md §6 runbook), "
+                             "then `mcctl watchdog arm`"))
+    else:  # local transport: this machine IS the box (or a dev sandbox)
+        if local_wd:
+            out.append(_ok("ops: brain placement", "watchdog runs on this machine (the box)"))
+            lr = _linger_result(_local_linger(), getpass.getuser())
+            if lr:
+                out.append(lr)
+        else:
+            out.append(_warn("ops: brain placement",
+                             "no mcctl watchdog daemon running on this machine — "
+                             "self-healing is off",
+                             "systemctl --user enable --now mcctl-watchdog.service, "
+                             "then `mcctl watchdog arm`"))
+
     return out
+
+
+def _local_watchdog_active() -> bool:
+    """Is an `mcctl watchdog run` daemon alive on THIS machine (unit or loose process)?"""
+    try:
+        r = subprocess.run(["systemctl", "--user", "is-active", "--quiet",
+                            "mcctl-watchdog.service"], timeout=5, capture_output=True)
+        if r.returncode == 0:
+            return True
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    try:
+        r = subprocess.run(["pgrep", "-f", "mcctl watchdog run"], timeout=5, capture_output=True)
+        return r.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _local_linger() -> str:
+    """Linger state for the current user: 'yes' | 'no' | '' (loginctl unavailable)."""
+    try:
+        r = subprocess.run(["loginctl", "show-user", getpass.getuser(), "--property=Linger"],
+                           timeout=5, capture_output=True, text=True)
+        return _parse_linger(r.stdout)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+def _parse_linger(text: str) -> str:
+    for line in text.splitlines():
+        if line.startswith("Linger="):
+            return line.split("=", 1)[1].strip()
+    return ""
+
+
+def _linger_result(linger: str, user: str) -> CheckResult | None:
+    """None when loginctl gave no answer — stay quiet rather than guess."""
+    if linger == "yes":
+        return _ok("ops: brain linger",
+                   f"enable-linger set for {user} — the brain survives logout/reboot")
+    if linger == "no":
+        return _warn("ops: brain linger",
+                     f"no linger for {user} — user units (the watchdog, the timers) die at "
+                     "logout and don't start at boot",
+                     f"sudo loginctl enable-linger {user}")
+    return None
