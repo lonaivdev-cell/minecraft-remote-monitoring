@@ -15,25 +15,11 @@ class ConfigError(RuntimeError):
     pass
 
 
-def _toml_val(v: object) -> str:
-    """Serialise a Python value to its TOML literal representation."""
-    if isinstance(v, bool):
-        return "true" if v else "false"
-    if isinstance(v, str):
-        escaped = v.replace("\\", "\\\\").replace('"', '\\"')
-        return f'"{escaped}"'
-    if isinstance(v, list):
-        items = ", ".join(_toml_val(x) for x in v)
-        return f"[{items}]"
-    return str(v)  # int / float
-
-
 @dataclass(slots=True)
 class ServerCfg:
     host: str = "144.33.19.123"
     ssh_port: int = 22
     user: str = "ubuntu"
-    ssh_key: str = ""                                     # path to SSH private key, e.g. ~/.ssh/id_rsa
     ssh_options: list[str] = field(default_factory=list)  # extra raw ssh -o options
     transport: str = "ssh"                                # "ssh" | "local" (dev/test)
     server_dir: str = "/opt/minecraft"
@@ -155,20 +141,6 @@ class Config:
         d = {"server": asdict(self.server), "backup": asdict(self.backup), "watchdog": asdict(self.watchdog)}
         return d
 
-    def save(self, path: Path | str | None = None) -> Path:
-        """Write current settings back to a TOML config file."""
-        p = Path(path) if path else (self.path or self.default_path())
-        self.path = p
-        lines: list[str] = []
-        for section_name, dc in (("server", self.server), ("backup", self.backup), ("watchdog", self.watchdog)):
-            lines.append(f"[{section_name}]")
-            for f in fields(dc):
-                lines.append(f"{f.name} = {_toml_val(getattr(dc, f.name))}")
-            lines.append("")
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text("\n".join(lines), encoding="utf-8")
-        return p
-
 
 # ---------------------------------------------------------------- template
 
@@ -181,10 +153,7 @@ TEMPLATE = """\
 host = "{host}"
 ssh_port = 22
 user = "{user}"
-# Path to SSH private key (leave empty to use ssh-agent or the default key).
-# Example: ~/.ssh/carborio
-ssh_key = ""
-# Extra raw ssh -o options, e.g. ["-o", "IdentityFile=~/.ssh/carborio"]
+# Extra ssh options, e.g. ["-o", "IdentityFile=~/.ssh/carborio"]
 ssh_options = []
 # "ssh" for the real server, "local" runs everything against this machine (dev/testing)
 transport = "ssh"

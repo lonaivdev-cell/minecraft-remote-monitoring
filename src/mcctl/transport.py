@@ -118,7 +118,6 @@ class SshTransport(BaseTransport):
         self._host = s.host
         self._user = s.user
         self._port = s.ssh_port
-        self._key = s.ssh_key       # path to SSH private key, empty = use agent/default
         self._extra = list(s.ssh_options)
         util.ensure_dirs()
         # %C = hash of local host/remote host/port/user: short & collision-free
@@ -131,10 +130,8 @@ class SshTransport(BaseTransport):
         return f"{self._user}@{self._host}"
 
     def _opts(self, *, batch: bool = True) -> list[str]:
-        o = ["-p", str(self._port)]
-        if self._key:
-            o += ["-i", self._key]
-        o += [
+        o = [
+            "-p", str(self._port),
             "-o", f"ControlPath={self._control}",
             "-o", "ControlMaster=auto",
             "-o", "ControlPersist=300",
