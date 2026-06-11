@@ -240,9 +240,14 @@ class Watchdog:
             pid = self.ctl.find_pid()
         if not pid:
             return
+        from .transport import q
         jc = f"{self.cfg.server.java_home}/bin/jcmd" if self.cfg.server.java_home else "jcmd"
         with contextlib.suppress(TransportError, OSError):
-            r = self.t.run(f"{jc} {pid} Thread.print 2>/dev/null | head -c 200000", timeout=30)
+            r = self.t.run(
+                f"if [ -x {q(jc)} ]; then {q(jc)} {pid} Thread.print; else jcmd {pid} Thread.print; fi "
+                "2>/dev/null | head -c 200000",
+                timeout=30,
+            )
             if r.out:
                 import datetime as dt
                 p = util.crashes_dir() / f"threaddump-{dt.datetime.now():%Y%m%d-%H%M%S}.txt"

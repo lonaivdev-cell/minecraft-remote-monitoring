@@ -1,6 +1,6 @@
 # fish completions for mcctl — Minecraft remote control & monitoring
 
-set -l cmds init doctor status start stop restart kill console cmd save tps health profile purge stats logs backup props jvm player watchdog sync rcon dash gui
+set -l cmds init doctor status start stop restart kill console cmd save tps health profile purge stats logs backup props jvm player watchdog sync rcon inspect mods ai dash gui
 
 complete -c mcctl -f
 
@@ -33,6 +33,9 @@ complete -c mcctl -n "not __fish_seen_subcommand_from $cmds" -a player -d 'white
 complete -c mcctl -n "not __fish_seen_subcommand_from $cmds" -a watchdog -d 'self-healing daemon'
 complete -c mcctl -n "not __fish_seen_subcommand_from $cmds" -a sync -d 'rsync config dir'
 complete -c mcctl -n "not __fish_seen_subcommand_from $cmds" -a rcon -d 'RCON channel status'
+complete -c mcctl -n "not __fish_seen_subcommand_from $cmds" -a inspect -d 'deep OS/JVM introspection'
+complete -c mcctl -n "not __fish_seen_subcommand_from $cmds" -a mods -d 'list server mods + versions'
+complete -c mcctl -n "not __fish_seen_subcommand_from $cmds" -a ai -d 'LLM analysis of logs/crashes/mods'
 complete -c mcctl -n "not __fish_seen_subcommand_from $cmds" -a dash -d 'live TUI dashboard'
 complete -c mcctl -n "not __fish_seen_subcommand_from $cmds" -a gui -d 'GTK desktop app'
 
@@ -41,6 +44,7 @@ complete -c mcctl -n "__fish_seen_subcommand_from init" -l force -d 'overwrite e
 complete -c mcctl -n "__fish_seen_subcommand_from init" -l host -r
 complete -c mcctl -n "__fish_seen_subcommand_from init" -l user -r
 complete -c mcctl -n "__fish_seen_subcommand_from init" -l server-dir -r
+complete -c mcctl -n "__fish_seen_subcommand_from init" -l tmux-session -r
 complete -c mcctl -n "__fish_seen_subcommand_from doctor" -l fix -d 'apply safe fixes'
 complete -c mcctl -n "__fish_seen_subcommand_from status tps health stats" -l json
 complete -c mcctl -n "__fish_seen_subcommand_from status" -l fast -d 'skip spark/heap probes'
@@ -69,3 +73,7 @@ complete -c mcctl -n "__fish_seen_subcommand_from watchdog; and not __fish_seen_
 complete -c mcctl -n "__fish_seen_subcommand_from sync" -l pull -r -d 'server config/ -> local DEST'
 complete -c mcctl -n "__fish_seen_subcommand_from sync" -l push -r -d 'local SRC -> server config/'
 complete -c mcctl -n "__fish_seen_subcommand_from console" -s c -l command -r -d 'one-shot console command'
+complete -c mcctl -n "__fish_seen_subcommand_from inspect; and not __fish_seen_subcommand_from tree proc threads memory fds net env jvm host" -a 'tree proc threads memory fds net env jvm host'
+complete -c mcctl -n "__fish_seen_subcommand_from inspect" -l learn -d 'plain-language walkthrough'
+complete -c mcctl -n "__fish_seen_subcommand_from inspect mods" -l json
+complete -c mcctl -n "__fish_seen_subcommand_from ai; and not __fish_seen_subcommand_from logs crash mods inspect ask" -a 'logs crash mods inspect ask'

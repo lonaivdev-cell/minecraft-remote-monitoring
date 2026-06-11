@@ -66,10 +66,19 @@ class WatchdogCfg:
 
 
 @dataclass(slots=True)
+class LlmCfg:
+    model: str = "claude-opus-4-8"                        # Anthropic model id
+    api_key_env: str = "ANTHROPIC_API_KEY"                # env var holding the key (never stored)
+    max_tokens: int = 8000                                # per-answer output budget
+    log_lines: int = 400                                  # log tail size sent with `mcctl ai logs`
+
+
+@dataclass(slots=True)
 class Config:
     server: ServerCfg = field(default_factory=ServerCfg)
     backup: BackupCfg = field(default_factory=BackupCfg)
     watchdog: WatchdogCfg = field(default_factory=WatchdogCfg)
+    llm: LlmCfg = field(default_factory=LlmCfg)
     path: Path | None = None
 
     # ---------------------------------------------------------------- load
@@ -91,7 +100,8 @@ class Config:
                 raw = tomllib.load(fh)
         except (OSError, tomllib.TOMLDecodeError) as e:
             raise ConfigError(f"cannot read {p}: {e}") from e
-        for section, dc in (("server", cfg.server), ("backup", cfg.backup), ("watchdog", cfg.watchdog)):
+        for section, dc in (("server", cfg.server), ("backup", cfg.backup),
+                            ("watchdog", cfg.watchdog), ("llm", cfg.llm)):
             data = raw.get(section, {})
             if not isinstance(data, dict):
                 raise ConfigError(f"[{section}] must be a table")
@@ -102,7 +112,7 @@ class Config:
                     continue
                 setattr(dc, k, v)
         for section in raw:
-            if section not in ("server", "backup", "watchdog"):
+            if section not in ("server", "backup", "watchdog", "llm"):
                 log.warning("config: unknown section [%s] ignored", section)
         cfg.validate()
         return cfg
@@ -134,12 +144,19 @@ class Config:
             problems.append("watchdog.interval must be >= 5s")
         if w.max_restarts < 1:
             problems.append("watchdog.max_restarts must be >= 1")
+        llm = self.llm
+        if not llm.model:
+            problems.append("llm.model must not be empty")
+        if not (256 <= llm.max_tokens <= 64000):
+            problems.append("llm.max_tokens must be in [256, 64000]")
+        if llm.log_lines < 10:
+            problems.append("llm.log_lines must be >= 10")
         if problems:
             raise ConfigError("invalid config:\n  - " + "\n  - ".join(problems))
 
     def to_dict(self) -> dict:
-        d = {"server": asdict(self.server), "backup": asdict(self.backup), "watchdog": asdict(self.watchdog)}
-        return d
+        return {"server": asdict(self.server), "backup": asdict(self.backup),
+                "watchdog": asdict(self.watchdog), "llm": asdict(self.llm)}
 
 
 # ---------------------------------------------------------------- template
@@ -205,6 +222,16 @@ auto_profile_on_lag = false
 notify_desktop = true
 # Discord-compatible webhook for crash/restart/alert messages, e.g. co-op channel.
 webhook_url = ""
+
+[llm]
+# AI log/crash/mod analysis (`mcctl ai …`, GUI "AI" page). Needs the optional
+# `anthropic` package and an API key in the environment — mcctl stores no keys.
+model = "claude-opus-4-8"
+api_key_env = "ANTHROPIC_API_KEY"
+# Output budget per answer (input is whatever context fits the analysis).
+max_tokens = 8000
+# How many latest.log lines `mcctl ai logs` sends as context.
+log_lines = 400
 """
 
 

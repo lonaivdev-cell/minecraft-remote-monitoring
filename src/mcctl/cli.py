@@ -20,6 +20,9 @@ from .backup import BackupError, BackupManager
 from .config import Config, ConfigError, write_template
 from .console import Console, ConsoleError
 from .doctor import Level, run_doctor
+from .inspector import InspectError
+from .llm import LlmError
+from .mods import ModsError
 from .players import PlayerError, Players
 from .props import PropError
 from .server import ServerControl, ServerError
@@ -634,6 +637,88 @@ def cmd_rcon(ctx: Ctx) -> int:
     return 1
 
 
+def cmd_inspect(ctx: Ctx) -> int:
+    from . import inspector
+    a = ctx.args
+    section = a.section or "host"
+    pid = None if section == "host" else ctx.ctl.find_pid()
+    rep = inspector.inspect_section(ctx.t, ctx.cfg, section, pid)
+    if a.json:
+        print(json.dumps(rep.to_dict(), indent=2))
+        return 0
+    rc.print(f"[bold cyan]── {rep.title} ──[/bold cyan]")
+    print(rep.text)
+    if a.learn:
+        rc.print("\n[bold yellow]── what am I looking at? ──[/bold yellow]")
+        rc.print(f"[dim]{inspector.EXPLAIN[section]}[/dim]")
+    else:
+        rc.print("\n[dim]add --learn for the plain-language walkthrough of this section[/dim]")
+    return 0
+
+
+def cmd_mods(ctx: Ctx) -> int:
+    from . import mods as M
+    entries = M.list_mods(ctx.t, ctx.cfg)
+    if ctx.args.json:
+        print(json.dumps([m.to_dict() for m in entries], indent=2))
+        return 0
+    t = Table(title=f"{len(entries)} mods in {ctx.cfg.server.server_dir}/mods "
+                    f"({util.human_bytes(sum(m.size for m in entries))})")
+    t.add_column("mod", style="bold")
+    t.add_column("id", style="dim")
+    t.add_column("version")
+    t.add_column("size", justify="right")
+    t.add_column("file", style="dim")
+    for m in entries:
+        t.add_row(m.name or "?", m.mod_id, m.version or "?", util.human_bytes(m.size), m.file)
+    rc.print(t)
+    if entries and not any(m.mod_id for m in entries):
+        rc.print("[dim]metadata unavailable — install python3 on the server for full info[/dim]")
+    return 0
+
+
+def cmd_ai(ctx: Ctx) -> int:
+    from . import inspector, llm
+    from . import mods as M
+    a = ctx.args
+    kind = a.ai_cmd or "logs"
+    question = " ".join(a.question) if getattr(a, "question", None) else ""
+    parts: list[str] = []
+
+    if kind == "logs":
+        parts.append(llm.status_envelope(ctx.ctl))
+        parts.append(llm.envelope("latest.log", logs.tail(ctx.t, ctx.cfg, ctx.cfg.llm.log_lines)))
+        parts.append(llm.metrics_envelope())
+    elif kind == "crash":
+        name, content = logs.crash_get(ctx.t, ctx.cfg, a.name or "")
+        if not name:
+            rc.print("[green]no crash reports on the server — nothing to analyze[/green]")
+            return 0
+        rc.print(f"[dim]analyzing crash-reports/{name}[/dim]")
+        parts.append(llm.envelope(f"crash-report {name}", content))
+        parts.append(llm.envelope("latest.log tail", logs.tail(ctx.t, ctx.cfg, 120)))
+    elif kind == "mods":
+        parts.append(llm.envelope("mod-list", M.render_text(M.list_mods(ctx.t, ctx.cfg))))
+        parts.append(llm.envelope("latest.log tail", logs.tail(ctx.t, ctx.cfg, 150)))
+    elif kind == "inspect":
+        section = a.section
+        pid = None if section == "host" else ctx.ctl.find_pid()
+        rep = inspector.inspect_section(ctx.t, ctx.cfg, section, pid)
+        parts.append(llm.envelope(f"inspect-{section}", rep.text))
+    elif kind == "ask":
+        if not question:
+            rc.print("[red]usage: mcctl ai ask QUESTION...[/red]")
+            return 2
+        parts.append(llm.status_envelope(ctx.ctl))
+        parts.append(llm.envelope("latest.log tail", logs.tail(ctx.t, ctx.cfg, 150)))
+
+    rc.print(f"[dim]asking {ctx.cfg.llm.model}…[/dim]\n")
+    llm.Analyst(ctx.cfg).analyze(kind, parts, question=question,
+                                 on_text=lambda s: print(s, end="", flush=True))
+    print()
+    return 0
+
+
 def cmd_dash(ctx: Ctx) -> int:
     from .dash import run_dash
     run_dash(ctx.cfg, ctx.t)
@@ -650,9 +735,13 @@ def cmd_gui(ctx: Ctx) -> int:
 def build_parser() -> argparse.ArgumentParser:
     # shared by the main parser and every (nested) subparser, so global flags
     # work in any position: `mcctl --config X status` == `mcctl status --config X`
+    # SUPPRESS so a subparser never clobbers a value parsed by the main parser
+    # (`mcctl --config X status` used to silently lose X); main() fills the
+    # defaults in when the flag was never given at all.
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--config", help="config file (default: ~/.config/mcctl/config.toml)")
-    common.add_argument("-v", "--verbose", action="count", default=0,
+    common.add_argument("--config", default=argparse.SUPPRESS,
+                        help="config file (default: ~/.config/mcctl/config.toml)")
+    common.add_argument("-v", "--verbose", action="count", default=argparse.SUPPRESS,
                         help="-v info, -vv debug on stderr")
 
     p = argparse.ArgumentParser(
@@ -834,6 +923,35 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("rcon", help="show RCON channel status")
     sp.set_defaults(func=cmd_rcon)
 
+    from .inspector import SECTIONS as _INSPECT_SECTIONS
+    sp = sub.add_parser("inspect", help="deep OS/JVM introspection (/proc, threads, jcmd…)")
+    sp.add_argument("section", nargs="?", choices=list(_INSPECT_SECTIONS), default="host",
+                    help="what to inspect (default: host)")
+    sp.add_argument("--learn", action="store_true",
+                    help="append the plain-language explanation of what you're seeing")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_inspect)
+
+    sp = sub.add_parser("mods", help="list server mods with versions (metadata from the jars)")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_mods)
+
+    sp = sub.add_parser("ai", help="LLM analysis: logs, crash reports, mods, inspections")
+    asub = nested(sp, "ai_cmd")
+    al = asub.add_parser("logs", help="review server state + recent log")
+    al.add_argument("question", nargs="*", help="optional extra question")
+    ac = asub.add_parser("crash", help="root-cause the newest (or named) crash report")
+    ac.add_argument("name", nargs="?", default="")
+    ac.add_argument("question", nargs="*", help="optional extra question")
+    am = asub.add_parser("mods", help="explain what the installed mods do & flag offenders")
+    am.add_argument("question", nargs="*", help="optional extra question")
+    ai_ = asub.add_parser("inspect", help="teacher-mode explanation of an inspector section")
+    ai_.add_argument("section", choices=list(_INSPECT_SECTIONS))
+    ai_.add_argument("question", nargs="*", help="optional extra question")
+    aa = asub.add_parser("ask", help="free-form question with server context attached")
+    aa.add_argument("question", nargs="+")
+    sp.set_defaults(func=cmd_ai, ai_cmd=None, question=[], name="", section="host")
+
     sp = sub.add_parser("dash", help="live TUI dashboard")
     sp.set_defaults(func=cmd_dash)
 
@@ -846,6 +964,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if not hasattr(args, "config"):
+        args.config = None
+    if not hasattr(args, "verbose"):
+        args.verbose = 0
     util.setup_logging(args.verbose)
     if not getattr(args, "func", None):
         parser.print_help()
@@ -864,6 +986,9 @@ def main(argv: list[str] | None = None) -> int:
         return 3
     except (ServerError, BackupError, SparkError, ConsoleError, PlayerError,
             metrics.MetricsError, util.LockHeldError, PropError) as e:
+        rc.print(f"[red]error:[/red] {e}")
+        return 1
+    except (InspectError, ModsError, LlmError) as e:
         rc.print(f"[red]error:[/red] {e}")
         return 1
     finally:
