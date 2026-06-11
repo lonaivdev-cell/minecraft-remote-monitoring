@@ -1,6 +1,6 @@
 # fish completions for mcctl — Minecraft remote control & monitoring
 
-set -l cmds init doctor status start stop restart kill console cmd save tps health profile purge stats logs backup props jvm player watchdog sync rcon inspect mods ai watch history trace dash gui agent events metrics notify-test
+set -l cmds init doctor postmortem status start stop restart kill console cmd save tps health profile purge stats logs backup props jvm player watchdog sync rcon inspect mods ai watch history trace dash gui agent events metrics notify-test
 
 complete -c mcctl -f
 
@@ -12,6 +12,7 @@ complete -c mcctl -l version -d 'print version'
 # subcommands
 complete -c mcctl -n "not __fish_seen_subcommand_from $cmds" -a init -d 'write a config template'
 complete -c mcctl -n "not __fish_seen_subcommand_from $cmds" -a doctor -d 'preflight checks'
+complete -c mcctl -n "not __fish_seen_subcommand_from $cmds" -a postmortem -d 'what went wrong (crash + events)'
 complete -c mcctl -n "not __fish_seen_subcommand_from $cmds" -a status -d 'full server status'
 complete -c mcctl -n "not __fish_seen_subcommand_from $cmds" -a start -d 'start the server'
 complete -c mcctl -n "not __fish_seen_subcommand_from $cmds" -a stop -d 'graceful stop'
@@ -53,6 +54,8 @@ complete -c mcctl -n "__fish_seen_subcommand_from init" -l user -r
 complete -c mcctl -n "__fish_seen_subcommand_from init" -l server-dir -r
 complete -c mcctl -n "__fish_seen_subcommand_from init" -l tmux-session -r
 complete -c mcctl -n "__fish_seen_subcommand_from doctor" -l fix -d 'apply safe fixes'
+complete -c mcctl -n "__fish_seen_subcommand_from postmortem" -l crash -r -d 'crash report filename (default: newest)'
+complete -c mcctl -n "__fish_seen_subcommand_from postmortem" -l json
 complete -c mcctl -n "__fish_seen_subcommand_from status tps health stats" -l json
 complete -c mcctl -n "__fish_seen_subcommand_from status" -l fast -d 'skip spark/heap probes'
 complete -c mcctl -n "__fish_seen_subcommand_from start" -l no-wait

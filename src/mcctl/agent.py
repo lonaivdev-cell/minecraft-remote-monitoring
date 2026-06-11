@@ -437,6 +437,14 @@ def _logs_crashes(srv: AgentServer, params: dict) -> dict:
     return {"crashes": [{"name": n, "size": sz, "mtime": mt} for n, sz, mt in rows]}
 
 
+@method("postmortem", params={"crash": "str"},
+        summary="Deterministic what-went-wrong: crash report + events + watchdog history.")
+def _postmortem(srv: AgentServer, params: dict) -> dict:
+    from . import postmortem
+    return postmortem.build_postmortem(
+        srv.ctx.t, srv.ctx.cfg, crash_name=params.get("crash", "")).to_dict()
+
+
 @method("metrics.history", params={"n": "int"},
         summary="Recent recorded metric samples (TPS/MSPT/heap/RAM/players).")
 def _metrics_history(srv: AgentServer, params: dict) -> dict:

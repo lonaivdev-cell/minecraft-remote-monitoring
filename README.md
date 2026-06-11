@@ -51,7 +51,8 @@ mcctl init  →  mcctl doctor  →  mcctl start  →  mcctl dash
 | `mcctl events [-f] [--since N]` | the watchdog's audit log: every heal/restart/alert, tail or follow (also streamed live over the agent's `events.subscribe`) |
 | `mcctl metrics export [--cat]` | Prometheus textfile exporter from `metrics.jsonl` for node_exporter → Grafana (atomic write; ships with `mcctl-metrics.timer`) |
 | `mcctl notify-test` | fire a test alert through every configured sink (desktop, Discord webhook, ntfy push) |
-| `mcctl doctor [--fix]` | end-to-end preflight; encodes the hard-won knowledge (below) |
+| `mcctl postmortem [--crash NAME]` | deterministic "what went wrong" — parses the newest crash report structurally (exception class, suspected mod + jar, prompt-injection flagging), folds in watchdog events/restart history and evidence bundles; no AI, no API key (`mcctl ai crash` stays the deep dive) |
+| `mcctl doctor [--fix]` | end-to-end preflight; encodes the hard-won knowledge (below), incl. the post-incident "ops" checks: exactly one restart authority (watchdog ⇄ systemd `Restart=` ⇄ start.sh `RESTART` loop), legacy watchdog detection, fstab `nofail` on the data volume |
 
 ## Install
 
@@ -162,6 +163,9 @@ crash report) land in `~/.local/state/mcctl/crashes/` before every heal.
   passes `ssh -i <key> -o IdentitiesOnly=yes`.
 - Heads-up: crash logs from this modpack are known to contain embedded
   prompt-injection text. It's inert noise — read the stack trace, ignore the prose.
+  `mcctl postmortem` detects and flags it (diagnosis comes from the stack trace
+  only), and the AI path seals it inside `<data>` envelopes — an embedded
+  `</data>` is neutralized so log text can never break out of the envelope.
 
 ## Hard-won knowledge, encoded
 
@@ -175,6 +179,9 @@ crash report) land in `~/.local/state/mcctl/crashes/` before every heal.
 | Verify by **process + session**, not session name | `find_pid` (pgrep + `/proc/<pid>/cwd`) |
 | Watchdog must stand down during migrations | disarmed by default, `desired` intent tracking |
 | `config/` drift → BCC version mismatch | `mcctl sync` |
+| Exactly ONE restart authority, or healers fight (2026-06-11 outage) | doctor `ops:` checks (systemd `Restart=`, legacy watchdog, start.sh `RESTART` loop) |
+| A data volume without `nofail` hangs boot with SSH down | doctor `ops: fstab nofail` |
+| Never reboot the VM for a server problem — diagnose the process | `mcctl postmortem`, `mcctl logs crash`, bounded stop escalation in `mcctl stop` |
 
 ## Architecture
 
@@ -193,7 +200,8 @@ src/mcctl/
 ├── props.py      server.properties + variables.txt editors
 ├── players.py    whitelist/op/kick/ban
 ├── logs.py       tail/follow/crash reports, evidence bundles, sanitization
-├── doctor.py     preflight checks + safe fixes
+├── doctor.py     preflight checks + safe fixes (+ post-incident single-restart-authority/ops checks)
+├── postmortem.py deterministic "what went wrong": crash-report parsing (pure) + events/state assembly
 ├── inspector.py  deep OS/JVM introspection (/proc, threads, maps, fds, jcmd) + learn-mode texts
 ├── mods.py       mod inventory — descriptors read from inside the jars, one round-trip
 ├── llm.py        AI analysis & chat: Anthropic + ollama backends, redaction, data envelopes, streaming

@@ -108,6 +108,33 @@ def cmd_doctor(ctx: Ctx) -> int:
     return worst
 
 
+def cmd_postmortem(ctx: Ctx) -> int:
+    from . import postmortem as pm
+    rep = pm.build_postmortem(ctx.t, ctx.cfg, crash_name=ctx.args.crash)
+    if ctx.args.json:
+        print(json.dumps(rep.to_dict(), indent=2))
+        return 0
+    rc.print("[bold]what went wrong[/bold]")
+    for line in rep.summary:
+        rc.print(f"  [yellow]•[/yellow] {line}")
+    c = rep.crash
+    if c and c.mod_frames:
+        rc.print(f"\n[bold]mod frames in {c.name}[/bold] [dim](topmost first)[/dim]")
+        for f in c.mod_frames[:5]:
+            rc.print(f"  {f.mod} [dim]{f.version}[/dim]  {f.location}")
+    if rep.events:
+        rc.print("\n[bold]recent watchdog events[/bold]")
+        for ev in rep.events[-8:]:
+            stamp = time.strftime("%m-%d %H:%M", time.localtime(ev.get("ts", 0)))
+            mark = "[red]![/red]" if ev.get("urgency") == "critical" else "[dim]·[/dim]"
+            rc.print(f"  {mark} [dim]{stamp}[/dim] {ev.get('kind')}: {ev.get('detail', '')}")
+    if rep.next_steps:
+        rc.print("\n[bold]next[/bold]")
+        for step in rep.next_steps:
+            rc.print(f"  [cyan]→[/cyan] {step}")
+    return 0
+
+
 def cmd_status(ctx: Ctx) -> int:
     st = ctx.ctl.status(full=not ctx.args.fast)
     if ctx.args.json:
@@ -965,6 +992,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--server-dir", dest="server_dir")
     sp.add_argument("--tmux-session", dest="tmux_session")
     sp.set_defaults(func=cmd_init)
+
+    sp = sub.add_parser("postmortem",
+                        help="what went wrong — newest crash + watchdog events, no AI needed")
+    sp.add_argument("--crash", default="", help="crash report filename (default: newest)")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_postmortem)
 
     sp = sub.add_parser("doctor", help="preflight checks (encodes the hard-won knowledge)")
     sp.add_argument("--fix", action="store_true", help="apply safe fixes (vars flags, rcon, dirs)")
