@@ -41,3 +41,34 @@ def test_json_state_roundtrip(tmp_path):
     util.save_json(p, {"a": 1})
     assert util.load_json(p, {}) == {"a": 1}
     assert util.load_json(tmp_path / "missing.json", {"d": True}) == {"d": True}
+
+
+# ---------------------------------------------------------------- systemd units
+
+def test_render_units_ships_all_five():
+    from mcctl import util
+    units = util.render_units()
+    assert set(units) == {"mcctl-watchdog.service", "mcctl-autosave.service",
+                          "mcctl-autosave.timer", "mcctl-backup.service",
+                          "mcctl-backup.timer"}
+
+
+def test_render_units_rewrites_execstart_for_pipx():
+    from mcctl import util
+    units = util.render_units(exe="/home/u/.local/bin/mcctl")
+    assert "ExecStart=/home/u/.local/bin/mcctl watchdog run" in units["mcctl-watchdog.service"]
+    assert "/usr/bin/mcctl" not in units["mcctl-watchdog.service"]
+    # timers carry no ExecStart and must come through untouched
+    assert "OnCalendar=*-*-* 04:30:00" in units["mcctl-backup.timer"]
+
+
+def test_render_units_keeps_usrbin_for_system_install():
+    from mcctl import util
+    units = util.render_units(exe="/usr/bin/mcctl")
+    assert "ExecStart=/usr/bin/mcctl save --skip-if-down" in units["mcctl-autosave.service"]
+
+
+def test_user_unit_dir_respects_xdg(isolated_xdg):
+    from mcctl import util
+    assert str(util.user_unit_dir()).startswith(str(isolated_xdg))
+    assert str(util.user_unit_dir()).endswith("systemd/user")

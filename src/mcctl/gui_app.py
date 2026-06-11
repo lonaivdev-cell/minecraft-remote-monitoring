@@ -16,6 +16,8 @@ import contextlib
 import queue
 import sys
 import threading
+import time
+from pathlib import Path
 
 import gi
 
@@ -25,9 +27,11 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
 from . import __version__, inspector, llm, logs, metrics, mods, state, util  # noqa: E402
+from . import props as propsmod  # noqa: E402
 from .backup import BackupManager  # noqa: E402
 from .config import Config, ConfigError  # noqa: E402
 from .console import Console, ConsoleError  # noqa: E402
+from .doctor import Level, run_doctor  # noqa: E402
 from .players import PlayerError, Players  # noqa: E402
 from .server import ServerControl, Status  # noqa: E402
 from .transport import BaseTransport, TransportError, make_transport  # noqa: E402
@@ -118,7 +122,7 @@ class Worker(threading.Thread):
 class Window(Adw.ApplicationWindow):
     def __init__(self, app: McctlApp):
         super().__init__(application=app, title="mcctl")
-        self.set_default_size(960, 720)
+        self.set_default_size(1120, 760)
         self.remote: Remote = app.remote
         self.worker: Worker = app.worker
         self.status = Status()
@@ -137,6 +141,18 @@ class Window(Adw.ApplicationWindow):
         self._mods_loaded = False
         self._inspect_refreshing = False
         self._ai_running = False
+        self._doctor_rows: list[Gtk.Widget] = []
+        self._doctor_running = False
+        self._props_rows: dict[str, Gtk.Widget] = {}
+        self._props_other_rows: list[Gtk.Widget] = []
+        self._props_loading = False
+        self._props_pf = None
+        self._jvm_loaded = False
+        self._jvm_loading = False
+        self._crash_rows: list[Gtk.Widget] = []
+        self._evidence_rows: list[Gtk.Widget] = []
+        self._crashes_refreshing = False
+        self._profiler_running = False
 
         self._build_ui()
 
@@ -150,27 +166,29 @@ class Window(Adw.ApplicationWindow):
     # ------------------------------------------------------------------ UI
 
     def _build_ui(self) -> None:
-        self.stack = Adw.ViewStack(vexpand=True)
-        self.stack.add_titled_with_icon(self._build_overview(), "overview", "Overview",
-                                        "utilities-system-monitor-symbolic")
-        self.stack.add_titled_with_icon(self._build_console(), "console", "Console",
-                                        "utilities-terminal-symbolic")
-        self.stack.add_titled_with_icon(self._build_logs(), "logs", "Logs",
-                                        "text-x-generic-symbolic")
-        self.stack.add_titled_with_icon(self._build_players(), "players", "Players",
-                                        "system-users-symbolic")
-        self.stack.add_titled_with_icon(self._build_backups(), "backups", "Backups",
-                                        "drive-harddisk-symbolic")
-        self.stack.add_titled_with_icon(self._build_mods(), "mods", "Mods",
-                                        "package-x-generic-symbolic")
-        self.stack.add_titled_with_icon(self._build_inspect(), "inspect", "Inspect",
-                                        "system-search-symbolic")
-        self.stack.add_titled_with_icon(self._build_ai(), "ai", "AI",
-                                        "starred-symbolic")
+        # 14 pages: a sidebar scales where a view switcher can't
+        self.stack = Gtk.Stack(vexpand=True, hexpand=True,
+                               transition_type=Gtk.StackTransitionType.CROSSFADE)
+        for builder, name, title in (
+            (self._build_overview, "overview", "Overview"),
+            (self._build_console, "console", "Console"),
+            (self._build_logs, "logs", "Logs"),
+            (self._build_players, "players", "Players"),
+            (self._build_backups, "backups", "Backups"),
+            (self._build_mods, "mods", "Mods"),
+            (self._build_inspect, "inspect", "Inspect"),
+            (self._build_ai, "ai", "AI"),
+            (self._build_doctor, "doctor", "Doctor"),
+            (self._build_props, "props", "Properties"),
+            (self._build_jvm, "jvm", "JVM"),
+            (self._build_crashes, "crashes", "Crashes"),
+            (self._build_profiler, "profiler", "Profiler"),
+            (self._build_sync, "sync", "Sync"),
+        ):
+            self.stack.add_titled(builder(), name, title)
         self.stack.connect("notify::visible-child-name", lambda *_: self._refresh_aux())
 
-        header = Adw.HeaderBar(
-            title_widget=Adw.ViewSwitcher(stack=self.stack, policy=Adw.ViewSwitcherPolicy.WIDE))
+        header = Adw.HeaderBar(title_widget=Adw.WindowTitle(title="mcctl"))
         refresh_btn = Gtk.Button(icon_name="view-refresh-symbolic",
                                  tooltip_text="Refresh now (Ctrl+R)",
                                  action_name="win.refresh")
@@ -184,10 +202,17 @@ class Window(Adw.ApplicationWindow):
         self.spinner = Gtk.Spinner()
         header.pack_end(self.spinner)
 
+        sidebar = Gtk.StackSidebar(stack=self.stack)
+        sidebar.set_size_request(150, -1)
+        split = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        split.append(sidebar)
+        split.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
+        split.append(self.stack)
+
         self.banner = Adw.Banner()
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         box.append(self.banner)
-        box.append(self.stack)
+        box.append(split)
         self.toasts = Adw.ToastOverlay(child=box)
 
         view = Adw.ToolbarView(content=self.toasts)
@@ -242,6 +267,7 @@ class Window(Adw.ApplicationWindow):
         self.armed_row.connect("notify::active", self._on_armed_toggled)
         g.add(self.armed_row)
         self.row_wd = self._kv(g, "State")
+        self.row_heals = self._kv(g, "Self-heals")
         box.append(g)
 
         return Gtk.ScrolledWindow(child=Adw.Clamp(maximum_size=760, child=box),
@@ -397,6 +423,139 @@ class Window(Adw.ApplicationWindow):
         box.append(Gtk.ScrolledWindow(child=self.ai_view, vexpand=True))
         return box
 
+    def _build_doctor(self) -> Gtk.Widget:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18,
+                      margin_top=24, margin_bottom=24, margin_start=12, margin_end=12)
+        self.doctor_group = Adw.PreferencesGroup(
+            title="Preflight checks",
+            description="Verifies SSH → layout → JVM → props end-to-end")
+        suffix = Gtk.Box(spacing=8)
+        run = Gtk.Button(label="Run checks")
+        run.connect("clicked", lambda *_: self._refresh_doctor())
+        suffix.append(run)
+        fix = Gtk.Button(label="Apply safe fixes")
+        fix.add_css_class("suggested-action")
+        fix.connect("clicked", lambda *_: self._confirm(
+            "Apply safe fixes?",
+            "Sets SKIP_JAVA_CHECK / WAIT_FOR_USER_INPUT / FORCE_FETCH in variables.txt, "
+            "creates the backup dir, and enables RCON with a generated password "
+            "(timestamped .bak files are kept on the server).",
+            "Apply", lambda: self._refresh_doctor(fix=True)))
+        suffix.append(fix)
+        self.doctor_group.set_header_suffix(suffix)
+        box.append(self.doctor_group)
+        return Gtk.ScrolledWindow(child=Adw.Clamp(maximum_size=860, child=box),
+                                  hscrollbar_policy=Gtk.PolicyType.NEVER)
+
+    def _build_props(self) -> Gtk.Widget:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18,
+                      margin_top=24, margin_bottom=24, margin_start=12, margin_end=12)
+        self.props_group = Adw.PreferencesGroup(
+            title="server.properties",
+            description="Validated editor — nothing is written until you review the diff")
+        suffix = Gtk.Box(spacing=8)
+        reload_btn = Gtk.Button(label="Reload")
+        reload_btn.connect("clicked", lambda *_: self._refresh_props())
+        suffix.append(reload_btn)
+        save = Gtk.Button(label="Review && save…")
+        save.add_css_class("suggested-action")
+        save.connect("clicked", self._on_props_save)
+        suffix.append(save)
+        self.props_group.set_header_suffix(suffix)
+        box.append(self.props_group)
+        self.props_other_group = Adw.PreferencesGroup(
+            title="Other keys on the server", description="Not in the validated set — edit via CLI")
+        box.append(self.props_other_group)
+        return Gtk.ScrolledWindow(child=Adw.Clamp(maximum_size=860, child=box),
+                                  hscrollbar_policy=Gtk.PolicyType.NEVER)
+
+    def _build_jvm(self) -> Gtk.Widget:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18,
+                      margin_top=24, margin_bottom=24, margin_start=12, margin_end=12)
+        g = Adw.PreferencesGroup(title="JVM launch settings",
+                                 description="variables.txt — changes apply on next restart, "
+                                             ".bak kept on the server")
+        self.jvm_heap_row = Adw.EntryRow(title="Heap (Xms = Xmx, e.g. 12G)",
+                                         show_apply_button=True)
+        self.jvm_heap_row.connect("apply", self._on_jvm_heap)
+        g.add(self.jvm_heap_row)
+        self.jvm_java_row = Adw.EntryRow(title="JAVA binary path on the server",
+                                         show_apply_button=True)
+        self.jvm_java_row.connect("apply", self._on_jvm_java)
+        g.add(self.jvm_java_row)
+        box.append(g)
+        self.jvm_info_group = Adw.PreferencesGroup(title="Effective configuration")
+        box.append(self.jvm_info_group)
+        self._jvm_info_rows: list[Gtk.Widget] = []
+        return Gtk.ScrolledWindow(child=Adw.Clamp(maximum_size=860, child=box),
+                                  hscrollbar_policy=Gtk.PolicyType.NEVER)
+
+    def _build_crashes(self) -> Gtk.Widget:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
+                      margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
+        self.crash_group = Adw.PreferencesGroup(title="Crash reports on the server")
+        box.append(self.crash_group)
+        self.evidence_group = Adw.PreferencesGroup(
+            title="Local evidence bundles",
+            description="Saved by the watchdog before every heal (pane, log tail, crash report)")
+        box.append(self.evidence_group)
+        self.crash_view = self._textview()
+        sw = Gtk.ScrolledWindow(child=self.crash_view, vexpand=True)
+        sw.set_min_content_height(260)
+        box.append(sw)
+        return Gtk.ScrolledWindow(child=Adw.Clamp(maximum_size=980, child=box),
+                                  hscrollbar_policy=Gtk.PolicyType.NEVER)
+
+    def _build_profiler(self) -> Gtk.Widget:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18,
+                      margin_top=24, margin_bottom=24, margin_start=12, margin_end=12)
+        g = Adw.PreferencesGroup(
+            title="spark async profiler",
+            description="Samples the running server and uploads to spark.lucko.me")
+        self.prof_seconds = Adw.SpinRow(
+            title="Duration (seconds)",
+            adjustment=Gtk.Adjustment(value=60, lower=10, upper=600, step_increment=10))
+        g.add(self.prof_seconds)
+        run = Gtk.Button(label="Start profiling", halign=Gtk.Align.START)
+        run.add_css_class("suggested-action")
+        run.connect("clicked", self._on_profile)
+        self.prof_run_btn = run
+        row = Adw.ActionRow(title="Run")
+        row.add_suffix(run)
+        g.add(row)
+        box.append(g)
+        self.prof_results = Adw.PreferencesGroup(title="Results (this session)")
+        box.append(self.prof_results)
+        return Gtk.ScrolledWindow(child=Adw.Clamp(maximum_size=860, child=box),
+                                  hscrollbar_policy=Gtk.PolicyType.NEVER)
+
+    def _build_sync(self) -> Gtk.Widget:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18,
+                      margin_top=24, margin_bottom=24, margin_start=12, margin_end=12)
+        g = Adw.PreferencesGroup(
+            title="config/ directory sync",
+            description="Fixes Better Compatibility Checker version mismatches (rsync)")
+        self.sync_dir_row = Adw.EntryRow(title="Local directory")
+        g.add(self.sync_dir_row)
+        pull_row = Adw.ActionRow(title="Pull", subtitle="server config/ → local directory")
+        pull = Gtk.Button(label="Pull", valign=Gtk.Align.CENTER)
+        pull.connect("clicked", lambda *_: self._on_sync(push=False))
+        pull_row.add_suffix(pull)
+        g.add(pull_row)
+        push_row = Adw.ActionRow(title="Push",
+                                 subtitle="local directory → server config/ (overwrites!)")
+        push = Gtk.Button(label="Push", valign=Gtk.Align.CENTER)
+        push.add_css_class("destructive-action")
+        push.connect("clicked", lambda *_: self._confirm(
+            "Push local config/ over the server's?",
+            "The server's config/ files are overwritten by your local copy.",
+            "Push", lambda: self._on_sync(push=True)))
+        push_row.add_suffix(push)
+        g.add(push_row)
+        box.append(g)
+        return Gtk.ScrolledWindow(child=Adw.Clamp(maximum_size=860, child=box),
+                                  hscrollbar_policy=Gtk.PolicyType.NEVER)
+
     # ------------------------------------------------------------ UI helpers
 
     def _pill(self, label: str, cb, *classes: str) -> Gtk.Button:
@@ -516,6 +675,14 @@ class Window(Adw.ApplicationWindow):
             self._refresh_mods()  # scan once; mods rarely change while we watch
         elif page == "inspect" and self.inspect_view.get_buffer().get_char_count() == 0:
             self._refresh_inspect()
+        elif page == "doctor" and not self._doctor_rows:
+            self._refresh_doctor()
+        elif page == "props" and not self._props_rows:
+            self._refresh_props()
+        elif page == "jvm" and not self._jvm_loaded:
+            self._refresh_jvm()
+        elif page == "crashes":
+            self._refresh_crashes()
 
     def _refresh_logs(self) -> None:
         if self._logs_refreshing or self._busy:
@@ -728,6 +895,393 @@ class Window(Adw.ApplicationWindow):
         buf.insert(buf.get_end_iter(), text)
         self._scroll_to_end(view)
 
+    # ------------------------------------------------------------- doctor
+
+    _LEVEL_GLYPHS = {Level.OK: ("✓", "success"), Level.WARN: ("!", "warning"),
+                     Level.FAIL: ("✗", "error"), Level.FIXED: ("+", "accent"),
+                     Level.SKIP: ("–", "dim-label")}
+
+    def _refresh_doctor(self, *, fix: bool = False) -> None:
+        if self._doctor_running:
+            return
+        self._doctor_running = True
+        self.doctor_group.set_description("Running checks…" + (" (applying fixes)" if fix else ""))
+
+        def done(results):
+            self._doctor_running = False
+            counts: dict[Level, int] = {}
+            for r in results:
+                counts[r.level] = counts.get(r.level, 0) + 1
+            self.doctor_group.set_description(
+                "  ".join(f"{n} {lv.value}" for lv, n in counts.items()))
+            self._doctor_rows = self._swap_rows(
+                self.doctor_group, self._doctor_rows, [self._doctor_row(r) for r in results])
+
+        def err(e: Exception):
+            self._doctor_running = False
+            self.doctor_group.set_description(str(e)[:160])
+
+        self.worker.submit(lambda: run_doctor(self.remote.cfg, self.remote.t, fix=fix),
+                           done, err)
+
+    def _doctor_row(self, r) -> Adw.ActionRow:
+        sub = r.detail + (f" — {r.hint}" if r.hint else "")
+        row = Adw.ActionRow(title=r.name, subtitle=sub)
+        glyph, cls = self._LEVEL_GLYPHS[r.level]
+        lbl = Gtk.Label(label=glyph, width_chars=2)
+        lbl.add_css_class(cls)
+        lbl.add_css_class("title-3")
+        row.add_prefix(lbl)
+        return row
+
+    # ------------------------------------------------------------- properties
+
+    def _refresh_props(self) -> None:
+        if self._props_loading:
+            return
+        self._props_loading = True
+        self.props_group.set_description("Loading server.properties…")
+
+        def done(pf):
+            self._props_loading = False
+            self._props_pf = pf
+            self.props_group.set_description(
+                "Validated editor — nothing is written until you review the diff")
+            known_rows, other_rows = [], []
+            rows: dict[str, tuple] = {}
+            for key, spec in sorted(propsmod.KNOWN_PROPS.items()):
+                if key == "rcon.password":
+                    continue
+                current = pf.get(key)
+                widget, orig = self._props_widget(key, spec, current)
+                rows[key] = (spec, widget, orig)
+                known_rows.append(widget)
+            known = set(propsmod.KNOWN_PROPS)
+            for key, value in sorted(pf.items()):
+                if key in known:
+                    continue
+                shown = "********" if "password" in key else value
+                other_rows.append(Adw.ActionRow(title=key, subtitle=shown))
+            old = [w for (_s, w, _o) in self._props_rows.values()]
+            self._swap_rows(self.props_group, old, known_rows)
+            self._props_rows = rows
+            self._props_other_rows = self._swap_rows(
+                self.props_other_group, self._props_other_rows, other_rows)
+
+        def err(e: Exception):
+            self._props_loading = False
+            self.props_group.set_description(f"Unreadable: {e}"[:200])
+
+        self.worker.submit(lambda: propsmod.load_props(self.remote.t, self.remote.cfg),
+                           done, err)
+
+    def _props_widget(self, key: str, spec, current: str | None) -> tuple[Gtk.Widget, str]:
+        """Build the editor row for a spec; returns (widget, original-rendered-value)."""
+        subtitle = spec.desc + ("" if current is not None else " · (not set on server)")
+        if spec.type == "bool":
+            row = Adw.SwitchRow(title=key, subtitle=subtitle, active=current == "true")
+            return row, ("true" if current == "true" else "false")
+        if spec.type == "enum":
+            row = Adw.ComboRow(title=key, subtitle=subtitle,
+                               model=Gtk.StringList.new(list(spec.enum)))
+            idx = spec.enum.index(current) if current in spec.enum else 0
+            row.set_selected(idx)
+            return row, spec.enum[idx]
+        if spec.type == "int":
+            lo = spec.lo if spec.lo is not None else -2**31
+            hi = spec.hi if spec.hi is not None else 2**31
+            try:
+                val = int(current) if current is not None else max(lo, 0)
+            except ValueError:
+                val = max(lo, 0)
+            row = Adw.SpinRow(title=key, subtitle=subtitle,
+                              adjustment=Gtk.Adjustment(value=val, lower=lo, upper=hi,
+                                                        step_increment=1))
+            return row, str(val)
+        row = Adw.EntryRow(title=f"{key} — {spec.desc}", text=current or "")
+        return row, (current or "")
+
+    def _props_value(self, spec, widget) -> str:
+        if spec.type == "bool":
+            return "true" if widget.get_active() else "false"
+        if spec.type == "enum":
+            return spec.enum[widget.get_selected()]
+        if spec.type == "int":
+            return str(int(widget.get_value()))
+        return widget.get_text().strip()
+
+    def _on_props_save(self, *_):
+        pf = self._props_pf
+        if pf is None:
+            self._toast("Load the properties first")
+            return
+        changes: dict[str, str] = {}
+        for key, (spec, widget, orig) in self._props_rows.items():
+            value = self._props_value(spec, widget)
+            if value != orig:
+                try:
+                    changes[key] = propsmod.validate_prop(key, value)
+                except propsmod.PropError as e:
+                    self._toast(str(e), timeout=8)
+                    return
+        if not changes:
+            self._toast("No changes to save")
+            return
+        new_pf = propsmod.PropertiesFile.parse(pf.render())
+        for k, v in changes.items():
+            new_pf.set(k, v)
+        diff = "\n".join(propsmod.props_diff(pf, new_pf))
+        live_keys = [k for k in changes if propsmod.KNOWN_PROPS[k].live_cmd]
+
+        dlg = Adw.AlertDialog(heading="Write server.properties?",
+                              body=f"{diff}\n\nA timestamped .bak is kept on the server; "
+                                   "most keys apply on next restart.")
+        live_check = None
+        if live_keys:
+            live_check = Gtk.CheckButton(
+                label=f"Also apply live now: {', '.join(live_keys)}")
+            dlg.set_extra_child(live_check)
+        dlg.add_response("cancel", "Cancel")
+        dlg.add_response("save", "Write")
+        dlg.set_response_appearance("save", Adw.ResponseAppearance.SUGGESTED)
+        dlg.set_default_response("cancel")
+        dlg.set_close_response("cancel")
+
+        def on_resp(_d, resp):
+            if resp != "save":
+                return
+            live = bool(live_check and live_check.get_active())
+
+            def job(r: Remote) -> str:
+                propsmod.save_props(r.t, r.cfg, new_pf)
+                applied = []
+                if live and r.ctl.find_pid() is not None:
+                    for k in live_keys:
+                        spec = propsmod.KNOWN_PROPS[k]
+                        v = changes[k]
+                        cmd = spec.live_cmd.format(v=v, onoff="on" if v == "true" else "off")
+                        with contextlib.suppress(Exception):
+                            r.console.send(cmd)
+                            applied.append(k)
+                msg = f"Wrote {len(changes)} change(s) (.bak kept)"
+                if applied:
+                    msg += f" · applied live: {', '.join(applied)}"
+                return msg
+            self._run_action("Writing server.properties…", job)
+            GLib.timeout_add_seconds(1, lambda: (self._refresh_props(), False)[1])
+        dlg.connect("response", on_resp)
+        dlg.present(self)
+
+    # ------------------------------------------------------------- jvm
+
+    def _refresh_jvm(self) -> None:
+        if self._jvm_loading:
+            return
+        self._jvm_loading = True
+
+        def job():
+            text = propsmod.load_variables(self.remote.t, self.remote.cfg)
+            memr = self.remote.t.run("free -b | awk '/^Mem:/{print $2}'", timeout=15)
+            total = int(memr.out.strip() or 0)
+            return text, total
+
+        def done(res):
+            self._jvm_loading = False
+            self._jvm_loaded = True
+            text, total = res
+            self._jvm_text, self._jvm_ram = text, total
+            args = propsmod.get_var(text, "JAVA_ARGS") or ""
+            _xms, xmx = propsmod.parse_heap(args)
+            self.jvm_heap_row.set_text(xmx or "")
+            self.jvm_java_row.set_text(propsmod.get_var(text, "JAVA") or "")
+            rows = [Adw.ActionRow(title="JAVA_ARGS", subtitle=args or "(none)",
+                                  subtitle_selectable=True)]
+            for k in ("SKIP_JAVA_CHECK", "WAIT_FOR_USER_INPUT", "SERVERSTARTERJAR_FORCE_FETCH",
+                      "MINECRAFT_VERSION", "MODLOADER", "MODLOADER_VERSION"):
+                v = propsmod.get_var(text, k)
+                if v is not None:
+                    rows.append(Adw.ActionRow(title=k, subtitle=v))
+            if total:
+                rows.append(Adw.ActionRow(title="Host RAM",
+                                          subtitle=util.human_bytes(total)))
+            self._jvm_info_rows = self._swap_rows(self.jvm_info_group,
+                                                  self._jvm_info_rows, rows)
+
+        def err(e: Exception):
+            self._jvm_loading = False
+            self.jvm_info_group.set_description(str(e)[:200])
+
+        self.worker.submit(job, done, err)
+
+    def _on_jvm_heap(self, row: Adw.EntryRow) -> None:
+        size = row.get_text().strip()
+        try:
+            heap = propsmod.size_to_bytes(size)
+        except propsmod.PropError as e:
+            self._toast(str(e), timeout=6)
+            return
+
+        def apply():
+            def job(r: Remote) -> str:
+                text = propsmod.load_variables(r.t, r.cfg)
+                propsmod.save_variables(r.t, r.cfg, propsmod.set_heap(text, size))
+                return f"Heap set to {size} (Xms=Xmx) — restart to apply"
+            self._run_action(f"Setting heap to {size}…", job)
+            self._jvm_loaded = False
+
+        total = getattr(self, "_jvm_ram", 0)
+        if total and heap > 0.75 * total:
+            self._confirm("Heap larger than 75% of host RAM",
+                          f"{size} of {util.human_bytes(total)} leaves little room for "
+                          "off-heap memory and the OS page cache.", "Set anyway",
+                          apply)
+        else:
+            apply()
+
+    def _on_jvm_java(self, row: Adw.EntryRow) -> None:
+        path = row.get_text().strip()
+        if not path:
+            return
+
+        def job(r: Remote) -> str:
+            from .transport import q as _q
+            if not r.t.run(f"test -x {_q(path)}", timeout=15).ok:
+                raise TransportError(f"{path} is not executable on the server")
+            text = propsmod.load_variables(r.t, r.cfg)
+            propsmod.save_variables(r.t, r.cfg, propsmod.set_var(text, "JAVA", path))
+            return f"JAVA set to {path} — restart to apply"
+        self._run_action("Setting JAVA path…", job)
+        self._jvm_loaded = False
+
+    # ------------------------------------------------------------- crashes
+
+    def _refresh_crashes(self) -> None:
+        if self._crashes_refreshing or self._busy:
+            return
+        self._crashes_refreshing = True
+
+        def done(reports):
+            self._crashes_refreshing = False
+            self.crash_group.set_description(
+                f"{len(reports)} report(s)" if reports else "No crash reports — good sign!")
+            self._crash_rows = self._swap_rows(
+                self.crash_group, self._crash_rows,
+                [self._crash_row(n, s, m) for n, s, m in reports])
+
+        def err(e: Exception):
+            self._crashes_refreshing = False
+            self.crash_group.set_description(str(e)[:160])
+
+        self.worker.submit(lambda: logs.crash_list(self.remote.t, self.remote.cfg), done, err)
+        self._refresh_evidence()
+
+    def _crash_row(self, name: str, size: int, mtime: int) -> Adw.ActionRow:
+        age = util.human_duration(max(0, int(time.time()) - mtime))
+        row = Adw.ActionRow(title=name, subtitle=f"{util.human_bytes(size)} · {age} ago")
+        view = Gtk.Button(label="View", valign=Gtk.Align.CENTER)
+        view.add_css_class("flat")
+        view.connect("clicked", lambda *_, n=name: self._show_crash(n))
+        row.add_suffix(view)
+        ai = Gtk.Button(label="Analyze with AI", valign=Gtk.Align.CENTER)
+        ai.add_css_class("flat")
+        ai.connect("clicked", lambda *_, n=name: self._crash_ai(n))
+        row.add_suffix(ai)
+        return row
+
+    def _show_crash(self, name: str) -> None:
+        def done(res):
+            _n, content = res
+            self.crash_view.get_buffer().set_text(content or "(empty)")
+        self.worker.submit(lambda: logs.crash_get(self.remote.t, self.remote.cfg, name),
+                           done,
+                           lambda e: self.crash_view.get_buffer().set_text(f"error: {e}"))
+
+    def _crash_ai(self, name: str) -> None:
+        def gather():
+            _n, content = logs.crash_get(self.remote.t, self.remote.cfg, name)
+            return [llm.envelope(f"crash-report {name}", content),
+                    llm.envelope("latest.log tail",
+                                 logs.tail(self.remote.t, self.remote.cfg, 120))]
+        self.stack.set_visible_child_name("ai")
+        self._ai_analyze_with(gather, "crash", "")
+
+    def _refresh_evidence(self) -> None:
+        bundles = sorted((d for d in util.crashes_dir().iterdir() if d.is_dir()),
+                         reverse=True) if util.crashes_dir().exists() else []
+        rows = []
+        for d in bundles[:20]:
+            reason = ""
+            with contextlib.suppress(OSError):
+                reason = (d / "reason.txt").read_text(encoding="utf-8").strip()[:120]
+            row = Adw.ActionRow(title=d.name, subtitle=reason or "(no reason recorded)")
+            b = Gtk.Button(label="View", valign=Gtk.Align.CENTER)
+            b.add_css_class("flat")
+            b.connect("clicked", lambda *_, p=d: self._show_evidence(p))
+            row.add_suffix(b)
+            rows.append(row)
+        self.evidence_group.set_description(
+            f"{len(bundles)} bundle(s) in {util.crashes_dir()}" if bundles
+            else "None yet — the watchdog saves one before every heal")
+        self._evidence_rows = self._swap_rows(self.evidence_group, self._evidence_rows, rows)
+
+    def _show_evidence(self, bundle: Path) -> None:
+        parts = []
+        for f in sorted(bundle.iterdir()):
+            with contextlib.suppress(OSError):
+                parts.append(f"━━━ {f.name} ━━━\n{f.read_text(encoding='utf-8', errors='replace')}")
+        self.crash_view.get_buffer().set_text("\n\n".join(parts) or "(empty bundle)")
+
+    # ------------------------------------------------------------- profiler / sync
+
+    def _on_profile(self, *_):
+        if self._profiler_running:
+            self._toast("Profiler already running")
+            return
+        secs = int(self.prof_seconds.get_value())
+        self._profiler_running = True
+        self.prof_run_btn.set_sensitive(False)
+        self._toast(f"Profiling for {secs}s — the result link appears below")
+
+        def job():
+            from .spark import Spark
+            return Spark(self.remote.console).profile(secs)
+
+        def done(url: str):
+            self._profiler_running = False
+            self.prof_run_btn.set_sensitive(True)
+            row = Adw.ActionRow(title=time.strftime("%H:%M:%S"), subtitle=f"{secs}s sample")
+            row.add_suffix(Gtk.LinkButton(uri=url, label="open report",
+                                          valign=Gtk.Align.CENTER))
+            self.prof_results.add(row)
+            self._toast("Profile ready")
+
+        def err(e: Exception):
+            self._profiler_running = False
+            self.prof_run_btn.set_sensitive(True)
+            self._toast(f"Profiler failed: {e}", timeout=8)
+
+        self.worker.submit(job, done, err)
+
+    def _on_sync(self, *, push: bool) -> None:
+        local = self.sync_dir_row.get_text().strip()
+        if not local:
+            self._toast("Enter the local directory first")
+            return
+        local = str(Path(local).expanduser())
+
+        def job(r: Remote) -> str:
+            remote = r.t.remote_spec(f"{r.cfg.server.server_dir}/config/")
+            if push:
+                code = r.t.rsync(local.rstrip("/") + "/", remote)
+            else:
+                Path(local).mkdir(parents=True, exist_ok=True)
+                code = r.t.rsync(remote, local.rstrip("/") + "/")
+            if code != 0:
+                raise TransportError(f"rsync exited with code {code}")
+            return ("Pushed local config/ to the server" if push
+                    else f"Pulled server config/ into {local}")
+        self._run_action("Syncing config/…", job)
+
     def _swap_rows(self, group: Adw.PreferencesGroup, old: list, new: list) -> list:
         for r in old:
             group.remove(r)
@@ -793,6 +1347,14 @@ class Window(Adw.ApplicationWindow):
         self._syncing_armed = False
         self.row_wd.set_label(f"desired={st.desired}"
                               + (" · HALTED (crash loop breaker)" if st.halted else ""))
+        wd_state = state.load()
+        window = self.remote.cfg.watchdog.restart_window
+        recent = [t for t in wd_state.get("restarts", []) if t > time.time() - window]
+        all_restarts = wd_state.get("restarts", [])
+        last = (f" · last {util.human_duration(int(time.time() - max(all_restarts)))} ago"
+                if all_restarts else "")
+        self.row_heals.set_label(
+            f"{len(recent)}/{self.remote.cfg.watchdog.max_restarts} in window{last}")
         self._update_buttons()
 
     def _gauge(self, bar: Gtk.LevelBar, label: Gtk.Label,
@@ -1032,8 +1594,10 @@ def run(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="mcctl-gui",
                                  description="GTK4/libadwaita desktop app for mcctl.")
     ap.add_argument("--config", help="config file (default: ~/.config/mcctl/config.toml)")
+    ap.add_argument("-v", "--verbose", action="count", default=0,
+                    help="-v info, -vv debug on stderr")
     args = ap.parse_args(argv)
-    util.setup_logging(0)
+    util.setup_logging(args.verbose)
     try:
         cfg = Config.load(args.config)
     except ConfigError as e:

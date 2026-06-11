@@ -158,3 +158,29 @@ def test_restore_missing_archive(cfg, fake_t):
     mgr = _mgr(cfg, fake_t, running=False)
     with pytest.raises(BackupError, match="no such backup"):
         mgr.restore("world-world-19990101-000000.tar.zst")
+
+
+# ---------------------------------------------------------------- full-backup excludes
+
+def test_full_excludes_outside_server_dir(cfg):
+    cfg.server.server_dir = "/opt/minecraft"
+    cfg.backup.remote_dir = "/opt/minecraft-backups"
+    from mcctl.backup import full_backup_excludes
+    out = full_backup_excludes(cfg)
+    assert out == cfg.backup.full_excludes  # sibling dir: no self-exclude needed
+
+
+def test_full_excludes_nested_backup_dir(cfg):
+    cfg.server.server_dir = "/opt/minecraft"
+    cfg.backup.remote_dir = "/opt/minecraft/backups"
+    from mcctl.backup import full_backup_excludes
+    out = full_backup_excludes(cfg)
+    assert out[-1] == "backups"
+    assert "logs" in out  # configured excludes still present
+
+
+def test_full_excludes_prefix_collision_is_not_nested(cfg):
+    cfg.server.server_dir = "/opt/minecraft"
+    cfg.backup.remote_dir = "/opt/minecraft-backups"  # shares prefix, NOT nested
+    from mcctl.backup import full_backup_excludes
+    assert "minecraft-backups" not in " ".join(full_backup_excludes(cfg))

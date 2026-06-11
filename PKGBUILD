@@ -1,7 +1,7 @@
 # Maintainer: CarborioLand <lorenzods.ls1@gmail.com>
 # Local/dev PKGBUILD: build straight from this checkout with `makepkg -si`.
 pkgname=mcctl
-pkgver=0.2.0
+pkgver=0.3.0
 pkgrel=1
 pkgdesc="Remote control & monitoring for a modded Minecraft server over SSH (tmux + ServerStarterJar launch model)"
 arch=('any')
@@ -33,15 +33,15 @@ check() {
 package() {
     cd "$startdir"
     python -m installer --destdir="$pkgdir" "$srcdir"/dist/*.whl
-    install -Dm644 systemd/mcctl-watchdog.service \
+    install -Dm644 src/mcctl/units/mcctl-watchdog.service \
         "$pkgdir/usr/lib/systemd/user/mcctl-watchdog.service"
-    install -Dm644 systemd/mcctl-autosave.service \
+    install -Dm644 src/mcctl/units/mcctl-autosave.service \
         "$pkgdir/usr/lib/systemd/user/mcctl-autosave.service"
-    install -Dm644 systemd/mcctl-autosave.timer \
+    install -Dm644 src/mcctl/units/mcctl-autosave.timer \
         "$pkgdir/usr/lib/systemd/user/mcctl-autosave.timer"
-    install -Dm644 systemd/mcctl-backup.service \
+    install -Dm644 src/mcctl/units/mcctl-backup.service \
         "$pkgdir/usr/lib/systemd/user/mcctl-backup.service"
-    install -Dm644 systemd/mcctl-backup.timer \
+    install -Dm644 src/mcctl/units/mcctl-backup.timer \
         "$pkgdir/usr/lib/systemd/user/mcctl-backup.timer"
     install -Dm644 completions/mcctl.fish \
         "$pkgdir/usr/share/fish/vendor_completions.d/mcctl.fish"

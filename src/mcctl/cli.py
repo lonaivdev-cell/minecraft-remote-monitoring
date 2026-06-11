@@ -573,35 +573,11 @@ def cmd_watchdog(ctx: Ctx) -> int:
 
 
 def _install_units() -> int:
-    from pathlib import Path
-    unit_dir = Path.home() / ".config/systemd/user"
+    """Install the systemd user units shipped inside the package (single source
+    shared with the PKGBUILD), rewriting ExecStart for non-/usr/bin installs."""
+    units = util.render_units(exe=sys.argv[0] if sys.argv[0].endswith("mcctl") else "mcctl")
+    unit_dir = util.user_unit_dir()
     unit_dir.mkdir(parents=True, exist_ok=True)
-    exe = sys.argv[0] if sys.argv[0].endswith("mcctl") else "mcctl"
-    units = {
-        "mcctl-watchdog.service": (
-            "[Unit]\nDescription=mcctl self-healing watchdog\nAfter=network-online.target\n\n"
-            f"[Service]\nExecStart={exe} watchdog run\nRestart=on-failure\nRestartSec=10\n\n"
-            "[Install]\nWantedBy=default.target\n"
-        ),
-        "mcctl-autosave.service": (
-            "[Unit]\nDescription=mcctl autosave trigger\n\n"
-            f"[Service]\nType=oneshot\nExecStart={exe} save --skip-if-down\n"
-        ),
-        "mcctl-autosave.timer": (
-            "[Unit]\nDescription=mcctl autosave every 20 minutes\n\n"
-            "[Timer]\nOnCalendar=*:0/20\nPersistent=false\n\n"
-            "[Install]\nWantedBy=timers.target\n"
-        ),
-        "mcctl-backup.service": (
-            "[Unit]\nDescription=mcctl world backup + rotation\n\n"
-            f"[Service]\nType=oneshot\nExecStart={exe} backup create --notify\n"
-        ),
-        "mcctl-backup.timer": (
-            "[Unit]\nDescription=mcctl daily world backup\n\n"
-            "[Timer]\nOnCalendar=*-*-* 04:30:00\nRandomizedDelaySec=10m\nPersistent=true\n\n"
-            "[Install]\nWantedBy=timers.target\n"
-        ),
-    }
     for name, content in units.items():
         (unit_dir / name).write_text(content, encoding="utf-8")
         rc.print(f"[green]wrote[/green] {unit_dir / name}")
@@ -727,7 +703,9 @@ def cmd_dash(ctx: Ctx) -> int:
 
 def cmd_gui(ctx: Ctx) -> int:
     from .gui import main as gui_main
-    return gui_main(["--config", ctx.args.config] if ctx.args.config else [])
+    argv = ["--config", ctx.args.config] if ctx.args.config else []
+    argv += ["-v"] * ctx.args.verbose
+    return gui_main(argv)
 
 
 # ================================================================ parser

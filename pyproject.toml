@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mcctl"
-version = "0.2.0"
+version = "0.3.0"
 description = "Remote control & monitoring for a modded Minecraft server over SSH (Arch Linux client)"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -25,6 +25,9 @@ mcctl-gui = "mcctl.gui:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+mcctl = ["units/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

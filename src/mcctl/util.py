@@ -224,6 +224,28 @@ def notify(title: str, body: str, *, desktop: bool = True, webhook_url: str = ""
             log.warning("webhook notification failed: %s", e)
 
 
+# ---------------------------------------------------------------- systemd units
+
+def user_unit_dir() -> Path:
+    """Per the systemd spec, user units live under $XDG_CONFIG_HOME/systemd/user."""
+    return _xdg("XDG_CONFIG_HOME", ".config") / "systemd" / "user"
+
+
+def render_units(*, exe: str = "mcctl") -> dict[str, str]:
+    """The unit files shipped in mcctl/units/ (the PKGBUILD installs the same
+    files verbatim), with ExecStart rewritten for non-/usr/bin installs (pipx)."""
+    from importlib import resources
+    units: dict[str, str] = {}
+    for entry in (resources.files("mcctl") / "units").iterdir():
+        if not entry.name.endswith((".service", ".timer")):
+            continue
+        text = entry.read_text(encoding="utf-8")
+        if exe != "/usr/bin/mcctl":
+            text = text.replace("ExecStart=/usr/bin/mcctl ", f"ExecStart={exe} ")
+        units[entry.name] = text
+    return units
+
+
 # ---------------------------------------------------------------- misc
 
 def free_port() -> int:

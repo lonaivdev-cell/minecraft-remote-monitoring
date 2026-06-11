@@ -129,3 +129,14 @@ def test_size_to_bytes():
 def test_set_heap_requires_java_args():
     with pytest.raises(PropError, match="JAVA_ARGS"):
         set_heap("FOO=bar\n", "8G")
+
+
+def test_known_props_specs_are_well_formed():
+    from mcctl.props import KNOWN_PROPS
+    for key, spec in KNOWN_PROPS.items():
+        assert spec.type in ("bool", "int", "str", "enum"), key
+        if spec.type == "enum":
+            assert spec.enum, f"{key}: enum spec without values"
+        if spec.type == "int":
+            assert spec.lo is not None and spec.hi is not None, f"{key}: unbounded int"
+        assert spec.desc, key

@@ -28,7 +28,7 @@ mcctl init  →  mcctl doctor  →  mcctl start  →  mcctl dash
 | `mcctl status [--json] [--fast]` | process/tmux/port/players/TPS/heap/host RAM/disk/backup age, one screen |
 | `mcctl start` / `stop` / `restart` | tmux + `start.sh` boot with readiness detection; graceful stop: player countdown → `save-all flush` → `stop` → SIGTERM → SIGKILL escalation |
 | `mcctl dash` | live TUI: TPS sparkline, heap/RAM gauges, log tail; keys for save/backup/purge/start/stop |
-| `mcctl gui` / `mcctl-gui` | native GTK4/libadwaita desktop app: live status, start/stop/restart, console, logs, players, backups, mods, OS/JVM inspector (with learn mode), AI analysis |
+| `mcctl gui` / `mcctl-gui` | native GTK4/libadwaita desktop app (sidebar, 14 pages): live status & actions, console, logs, players, backups, mods, OS/JVM inspector (learn mode), AI analysis, doctor with safe fixes, validated server.properties editor, JVM settings, crash reports + evidence bundles, spark profiler, config sync |
 | `mcctl backup [create\|list\|prune\|pull\|verify\|restore]` | consistent snapshots (`save-off` → flush → tar+zstd → verify → `save-on` guaranteed), GFS rotation, rsync pull, safe restore |
 | `mcctl save` | `save-all flush` with confirmation; `--skip-if-down` for timers |
 | `mcctl watchdog [run\|arm\|disarm\|status\|install]` | self-healing daemon: crash restart with backoff, freeze detection (stale log + dead console → thread dump → restart), crash-loop breaker, TPS/heap/disk/SSH alerts |
