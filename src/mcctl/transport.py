@@ -118,6 +118,9 @@ class SshTransport(BaseTransport):
         self._host = s.host
         self._user = s.user
         self._port = s.ssh_port
+        # expand ~ ourselves: argv is handed to ssh without a shell, and a literal
+        # "~/.ssh/key" would otherwise be looked up verbatim on some setups.
+        self._key = str(Path(s.ssh_key).expanduser()) if s.ssh_key.strip() else ""
         self._extra = list(s.ssh_options)
         util.ensure_dirs()
         # %C = hash of local host/remote host/port/user: short & collision-free
@@ -130,8 +133,11 @@ class SshTransport(BaseTransport):
         return f"{self._user}@{self._host}"
 
     def _opts(self, *, batch: bool = True) -> list[str]:
-        o = [
-            "-p", str(self._port),
+        o = ["-p", str(self._port)]
+        if self._key:
+            # -i wins over agent keys; IdentitiesOnly stops ssh trying agent keys first
+            o += ["-i", self._key, "-o", "IdentitiesOnly=yes"]
+        o += [
             "-o", f"ControlPath={self._control}",
             "-o", "ControlMaster=auto",
             "-o", "ControlPersist=300",

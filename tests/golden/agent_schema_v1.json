@@ -359,6 +359,7 @@
       "port_open": "bool",
       "running": "bool",
       "tmux": "bool",
+      "tmux_session": "str | None",
       "tps": "dict | None",
       "uptime_s": "int | None"
     },
@@ -392,6 +393,7 @@
       "mc_port": "int",
       "rcon_port": "int",
       "server_dir": "str",
+      "ssh_key": "str",
       "ssh_options": "list[str]",
       "ssh_port": "int",
       "start_command": "str",

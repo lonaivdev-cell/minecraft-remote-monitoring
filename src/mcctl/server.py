@@ -38,6 +38,7 @@ class Status:
     pid: int | None = None
     uptime_s: int | None = None
     tmux: bool = False
+    tmux_session: str | None = None  # the session actually hosting the server (discovered)
     pane_dead: bool = False
     port_open: bool = False
     log_age_s: int | None = None
@@ -79,6 +80,27 @@ def _pid_loop(server_dir: str) -> str:
     )
 
 
+def _session_discovery() -> str:
+    """Bash that prints `host_session=<name>` for the tmux session whose pane is an
+    ancestor of $pid. This finds the live server's console even when the session was
+    named differently than the config expects (e.g. started by an older mcctl, or by
+    hand) — so opening the app re-attaches instead of forcing a stop/restart."""
+    return (
+        'if [ -n "$pid" ] && command -v tmux >/dev/null 2>&1; then\n'
+        '  anc=" $pid "; p="$pid"; i=0\n'
+        '  while [ "$i" -lt 24 ]; do\n'
+        '    pp=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d " ")\n'
+        '    case "$pp" in ""|0|1) break;; esac\n'
+        '    anc="$anc$pp "; p="$pp"; i=$((i+1))\n'
+        '  done\n'
+        "  tmux list-panes -a -F '#{session_name} #{pane_pid}' 2>/dev/null | while read -r sname spid; do\n"
+        '    [ -z "$spid" ] && continue\n'
+        '    case "$anc" in *" $spid "*) echo "host_session=$sname"; break;; esac\n'
+        '  done\n'
+        'fi\n'
+    )
+
+
 class ServerControl:
     def __init__(self, cfg: Config, transport: BaseTransport, console: Console | None = None,
                  sleeper: Callable[[float], None] = time.sleep):
@@ -106,7 +128,8 @@ class ServerControl:
             + _pid_loop(s.server_dir).replace('echo "$p"; break', 'pid="$p"; break')
             + 'echo "pid=$pid"\n'
             'if [ -n "$pid" ]; then echo "etimes=$(ps -o etimes= -p "$pid" | tr -d \' \')"; fi\n'
-            'if tmux has-session -t "$sess" 2>/dev/null; then\n'
+            + _session_discovery()
+            + 'if tmux has-session -t "$sess" 2>/dev/null; then\n'
             "  echo tmux=1\n"
             "  echo \"pane_dead=$(tmux list-panes -t \"$sess\" -F '#{pane_dead}' 2>/dev/null | head -1)\"\n"
             "else echo tmux=0; fi\n"
@@ -156,7 +179,11 @@ class ServerControl:
         st.running = st.pid is not None
         if kv.get("etimes", "").isdigit():
             st.uptime_s = int(kv["etimes"])
-        st.tmux = kv.get("tmux") == "1"
+        host_session = kv.get("host_session") or None
+        # a live server in a differently-named session still counts as "tmux up"
+        st.tmux = kv.get("tmux") == "1" or bool(host_session)
+        st.tmux_session = host_session or (
+            self.cfg.server.tmux_session if kv.get("tmux") == "1" else None)
         st.pane_dead = kv.get("pane_dead") == "1"
         st.port_open = kv.get("port") == "1"
         if kv.get("log_age", "").isdigit():
@@ -186,6 +213,33 @@ class ServerControl:
             with contextlib.suppress(SparkError, ConsoleError, TransportError):
                 st.tps = Spark(self.console).tps().to_dict()
         return st
+
+    def adopt(self, st: Status | None = None) -> str | None:
+        """Connect to an already-running server instead of treating it as foreign.
+
+        Opening the app (e.g. after an update) probes the box; if a server is live
+        this reconciles local state so we drive *that* process — no stop/restart:
+          - the discovered tmux session name is adopted into the in-memory config so
+            the console/stop/restart target the session that's actually running, even
+            if it was named differently than the config expects;
+          - user-intent is set to `up` so the UI and the watchdog agree the server is
+            meant to be running (the watchdog will then protect the adopted session).
+        It never starts, stops, or restarts anything. Returns a one-line note when it
+        adopted something, else None.
+        """
+        st = st or self.status(full=False)
+        if not st.running:
+            return None
+        notes: list[str] = []
+        if st.tmux_session and st.tmux_session != self.cfg.server.tmux_session:
+            old = self.cfg.server.tmux_session
+            self.cfg.server.tmux_session = st.tmux_session
+            log.info("adopted live tmux session %r (config said %r)", st.tmux_session, old)
+            notes.append(f"console session '{st.tmux_session}'")
+        if state.load().get("desired") != "up":
+            state.set_desired("up")
+            notes.append("watchdog intent → up")
+        return "connected to the running server (" + ", ".join(notes) + ")" if notes else None
 
     # ---------------------------------------------------------------- start
 

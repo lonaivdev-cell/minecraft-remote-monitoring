@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import queue
+import shlex
 import sys
 import threading
 import time
@@ -159,8 +160,13 @@ class Window(Adw.ApplicationWindow):
         self._history_lo = 0.0
         self._history_hi = 20.0
         self._history_refreshing = False
+        self._settings_fields: list[tuple] = []      # (section, key, kind, widget)
+        self._settings_saving = False
+        self._ollama_models: list[str] = []
+        self._adopted = False                         # one-shot "connect to running server"
 
         self._build_ui()
+        self._update_llm_widgets()  # initial AI/Chat availability + provider labels
 
         act = Gio.SimpleAction.new("refresh", None)
         act.connect("activate", lambda *_: (self._refresh(full=True), self._refresh_aux()))
@@ -172,7 +178,7 @@ class Window(Adw.ApplicationWindow):
     # ------------------------------------------------------------------ UI
 
     def _build_ui(self) -> None:
-        # 16 pages: a sidebar scales where a view switcher can't
+        # 17 pages: a sidebar scales where a view switcher can't
         self.stack = Gtk.Stack(vexpand=True, hexpand=True,
                                transition_type=Gtk.StackTransitionType.CROSSFADE)
         for builder, name, title in (
@@ -192,6 +198,7 @@ class Window(Adw.ApplicationWindow):
             (self._build_crashes, "crashes", "Crashes"),
             (self._build_profiler, "profiler", "Profiler"),
             (self._build_sync, "sync", "Sync"),
+            (self._build_settings, "settings", "Settings"),
         ):
             self.stack.add_titled(builder(), name, title)
         self.stack.connect("notify::visible-child-name", lambda *_: self._refresh_aux())
@@ -402,12 +409,11 @@ class Window(Adw.ApplicationWindow):
     def _build_ai(self) -> Gtk.Widget:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6,
                       margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
-        ok, reason = llm.available(self.remote.cfg)
-        if not ok:
-            note = Gtk.Label(label=f"AI analysis is unavailable:\n{reason}",
-                             halign=Gtk.Align.START, selectable=True)
-            note.add_css_class("dim-label")
-            box.append(note)
+        # always present (toggled live) so changing [llm] in Settings updates the page
+        self.ai_note = Gtk.Label(halign=Gtk.Align.START, selectable=True, wrap=True, visible=False)
+        self.ai_note.add_css_class("dim-label")
+        self.ai_note.add_css_class("warning")
+        box.append(self.ai_note)
         row = Gtk.Box(spacing=8)
         self.ai_kinds = ("logs", "crash", "mods", "ask")
         self.ai_drop = Gtk.DropDown.new_from_strings(
@@ -420,15 +426,12 @@ class Window(Adw.ApplicationWindow):
         self.ai_run = Gtk.Button(label="Analyze")
         self.ai_run.add_css_class("suggested-action")
         self.ai_run.connect("clicked", self._on_ai_run)
-        self.ai_run.set_sensitive(ok)
         row.append(self.ai_run)
         box.append(row)
-        hint = Gtk.Label(label=f"Model: {llm.provider_label(self.remote.cfg)} · logs/crash text "
-                               "is secret-redacted and sent as untrusted data only.",
-                         halign=Gtk.Align.START)
-        hint.add_css_class("dim-label")
-        hint.add_css_class("caption")
-        box.append(hint)
+        self.ai_hint = Gtk.Label(halign=Gtk.Align.START)
+        self.ai_hint.add_css_class("dim-label")
+        self.ai_hint.add_css_class("caption")
+        box.append(self.ai_hint)
         self.ai_view = self._textview()
         self.ai_view.set_monospace(False)
         self.ai_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
@@ -438,12 +441,10 @@ class Window(Adw.ApplicationWindow):
     def _build_chat(self) -> Gtk.Widget:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6,
                       margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
-        ok, reason = llm.available(self.remote.cfg)
-        if not ok:
-            note = Gtk.Label(label=f"Chat is unavailable:\n{reason}",
-                             halign=Gtk.Align.START, selectable=True)
-            note.add_css_class("dim-label")
-            box.append(note)
+        self.chat_note = Gtk.Label(halign=Gtk.Align.START, selectable=True, wrap=True, visible=False)
+        self.chat_note.add_css_class("dim-label")
+        self.chat_note.add_css_class("warning")
+        box.append(self.chat_note)
         self.chat_view = self._textview()
         self.chat_view.set_monospace(False)
         self.chat_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
@@ -453,23 +454,19 @@ class Window(Adw.ApplicationWindow):
             placeholder_text="Ask anything — the live server status & log are attached",
             hexpand=True)
         self.chat_entry.connect("activate", self._on_chat_send)
-        self.chat_entry.set_sensitive(ok)
         self.chat_send = Gtk.Button(label="Send")
         self.chat_send.add_css_class("suggested-action")
         self.chat_send.connect("clicked", self._on_chat_send)
-        self.chat_send.set_sensitive(ok)
         new_btn = Gtk.Button(label="New", tooltip_text="Start a fresh conversation")
         new_btn.connect("clicked", self._on_chat_new)
         row.append(self.chat_entry)
         row.append(self.chat_send)
         row.append(new_btn)
         box.append(row)
-        hint = Gtk.Label(label=f"{llm.provider_label(self.remote.cfg)} · multi-turn; context is "
-                               "secret-redacted and sent as untrusted data only.",
-                         halign=Gtk.Align.START)
-        hint.add_css_class("dim-label")
-        hint.add_css_class("caption")
-        box.append(hint)
+        self.chat_hint = Gtk.Label(halign=Gtk.Align.START)
+        self.chat_hint.add_css_class("dim-label")
+        self.chat_hint.add_css_class("caption")
+        box.append(self.chat_hint)
         return box
 
     def _build_history(self) -> Gtk.Widget:
@@ -633,6 +630,321 @@ class Window(Adw.ApplicationWindow):
         return Gtk.ScrolledWindow(child=Adw.Clamp(maximum_size=860, child=box),
                                   hscrollbar_policy=Gtk.PolicyType.NEVER)
 
+    # ------------------------------------------------------------ settings
+
+    def _build_settings(self) -> Gtk.Widget:
+        """A full editor for ~/.config/mcctl/config.toml — every section, so you
+        never have to hand-edit the file. Connection changes reconnect in place."""
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18,
+                      margin_top=24, margin_bottom=24, margin_start=12, margin_end=12)
+        intro = Gtk.Label(
+            label="Edit every mcctl setting here — saved straight to your config.toml.",
+            halign=Gtk.Align.START, wrap=True)
+        intro.add_css_class("dim-label")
+        box.append(intro)
+
+        g = Adw.PreferencesGroup(
+            title="SSH connection",
+            description="How mcctl reaches the server. Saving these reconnects in place.")
+        self._add_field(g, "server", "host", "text", "Host / IP")
+        self._add_field(g, "server", "ssh_port", "int", "SSH port")
+        self._add_field(g, "server", "user", "text", "User")
+        self._add_field(g, "server", "ssh_key", "path", "SSH private key",
+                        "Path passed to ssh -i; empty = ssh-agent / default key")
+        self._add_field(g, "server", "ssh_options", "args", "Extra SSH flags",
+                        "Raw ssh args, e.g.  -o IdentityFile=~/.ssh/carborio")
+        self._add_field(g, "server", "transport", "choice:ssh|local", "Transport",
+                        '"local" runs everything against this machine (dev/testing)')
+        box.append(g)
+
+        g = Adw.PreferencesGroup(title="Server layout", description="Remote paths and ports.")
+        self._add_field(g, "server", "server_dir", "text", "Server directory (absolute)")
+        self._add_field(g, "server", "tmux_session", "text", "tmux session name")
+        self._add_field(g, "server", "start_command", "text", "Start command")
+        self._add_field(g, "server", "log_file", "text", "Log file (relative to dir)")
+        self._add_field(g, "server", "world_dir", "text", "World dir (relative to dir)")
+        self._add_field(g, "server", "mc_port", "int", "Minecraft port")
+        self._add_field(g, "server", "rcon_port", "int", "RCON port")
+        self._add_field(g, "server", "java_home", "text", "JAVA_HOME on the server")
+        self._add_field(g, "server", "start_timeout", "int", "Start timeout (s)")
+        self._add_field(g, "server", "stop_timeout", "int", "Stop timeout (s)")
+        self._add_field(g, "server", "stop_countdown", "ints", "Stop countdown (s)",
+                        "Space-separated seconds, e.g.  30 10 5")
+        box.append(g)
+
+        g = Adw.PreferencesGroup(title="Backups")
+        self._add_field(g, "backup", "remote_dir", "text", "Remote backup dir (absolute)")
+        self._add_field(g, "backup", "prefix", "text", "Archive name prefix")
+        self._add_field(g, "backup", "compression", "choice:zstd|gzip", "Compression")
+        self._add_field(g, "backup", "keep_recent", "int", "Keep newest N")
+        self._add_field(g, "backup", "keep_daily", "int", "Keep one/day for D days")
+        self._add_field(g, "backup", "keep_weekly", "int", "Keep one/week for W weeks")
+        self._add_field(g, "backup", "min_free_gb", "float", "Refuse below free GB")
+        self._add_field(g, "backup", "local_dir", "dir", "Local mirror dir (backup pull)")
+        self._add_field(g, "backup", "full_excludes", "args", "Excludes for --full")
+        box.append(g)
+
+        g = Adw.PreferencesGroup(title="Watchdog and alerts")
+        self._add_field(g, "watchdog", "interval", "int", "Check interval (s)")
+        self._add_field(g, "watchdog", "freeze_log_age", "int", "Freeze: log age (s)")
+        self._add_field(g, "watchdog", "max_restarts", "int", "Max restarts / window")
+        self._add_field(g, "watchdog", "restart_window", "int", "Restart window (s)")
+        self._add_field(g, "watchdog", "backoff_base", "int", "Backoff base (s)")
+        self._add_field(g, "watchdog", "tps_alert", "float", "Alert when TPS below")
+        self._add_field(g, "watchdog", "heap_alert_pct", "int", "Alert when heap % above")
+        self._add_field(g, "watchdog", "autosave_minutes", "int", "Built-in autosave (min, 0=off)")
+        self._add_field(g, "watchdog", "auto_profile_on_lag", "bool", "Auto-profile on low TPS")
+        self._add_field(g, "watchdog", "notify_desktop", "bool", "Desktop notifications")
+        self._add_field(g, "watchdog", "webhook_url", "text", "Discord-style webhook URL")
+        self._add_field(g, "watchdog", "ntfy_url", "text", "ntfy server URL")
+        self._add_field(g, "watchdog", "ntfy_topic", "text", "ntfy topic (phone push)")
+        self._add_field(g, "watchdog", "ntfy_token", "text", "ntfy bearer token")
+        box.append(g)
+
+        g = Adw.PreferencesGroup(
+            title="AI / LLM",
+            description="provider = anthropic (Claude API) or ollama (local, no key, nothing leaves the box).")
+        self._add_field(g, "llm", "provider", "choice:anthropic|ollama", "Provider")
+        self._add_field(g, "llm", "model", "text", "Anthropic model id")
+        self._add_field(g, "llm", "api_key_env", "text", "API-key env var")
+        self._add_field(g, "llm", "max_tokens", "int", "Max output tokens")
+        self._add_field(g, "llm", "log_lines", "int", "Log lines sent as context")
+        self._add_field(g, "llm", "ollama_url", "text", "ollama server URL")
+        ollama_row = self._add_field(g, "llm", "ollama_model", "text", "ollama model")
+        choose = Gtk.Button(icon_name="view-list-symbolic", valign=Gtk.Align.CENTER,
+                            tooltip_text="Choose from the models ollama has pulled (`ollama list`)")
+        choose.add_css_class("flat")
+        choose.connect("clicked", self._on_ollama_choose)
+        ollama_row.add_suffix(choose)
+        box.append(g)
+
+        g = Adw.PreferencesGroup(title="Metrics and display")
+        self._add_field(g, "metrics", "prom_path", "text", "Prometheus .prom path (empty = state dir)")
+        self._add_field(g, "ui", "timezone", "text", "Display timezone (IANA; empty = raw)")
+        self._add_field(g, "ui", "server_timezone", "text", "Server timezone (IANA)")
+        box.append(g)
+
+        bar = Gtk.Box(spacing=8, halign=Gtk.Align.END)
+        revert = Gtk.Button(label="Revert")
+        revert.connect("clicked", lambda *_: (self._sync_settings(),
+                                              self._toast("Reverted to saved values", timeout=2)))
+        bar.append(revert)
+        save_btn = Gtk.Button(label="Save to config.toml")
+        save_btn.add_css_class("suggested-action")
+        save_btn.add_css_class("pill")
+        save_btn.connect("clicked", self._on_settings_save)
+        bar.append(save_btn)
+        box.append(bar)
+        self.settings_path_label = Gtk.Label(halign=Gtk.Align.END, selectable=True)
+        self.settings_path_label.add_css_class("dim-label")
+        self.settings_path_label.add_css_class("caption")
+        box.append(self.settings_path_label)
+
+        self._sync_settings()
+        return Gtk.ScrolledWindow(child=Adw.Clamp(maximum_size=820, child=box),
+                                  hscrollbar_policy=Gtk.PolicyType.NEVER)
+
+    def _add_field(self, group: Adw.PreferencesGroup, section: str, key: str, kind: str,
+                   title: str, subtitle: str = "") -> Gtk.Widget:
+        if kind == "bool":
+            widget = Adw.SwitchRow(title=title, subtitle=subtitle)
+        elif kind.startswith("choice:"):
+            opts = kind.split(":", 1)[1].split("|")
+            widget = Adw.ComboRow(title=title, subtitle=subtitle,
+                                  model=Gtk.StringList.new(opts))
+        else:
+            widget = Adw.EntryRow(title=title)
+            if subtitle:
+                widget.set_tooltip_text(subtitle)
+        group.add(widget)
+        self._settings_fields.append((section, key, kind, widget))
+        if kind in ("path", "dir"):
+            folder = kind == "dir"
+            btn = Gtk.Button(icon_name="folder-open-symbolic" if folder else "document-open-symbolic",
+                             valign=Gtk.Align.CENTER, tooltip_text="Browse")
+            btn.add_css_class("flat")
+            btn.connect("clicked", lambda *_, w=widget, f=folder: self._on_path_browse(w, f))
+            widget.add_suffix(btn)
+        return widget
+
+    def _field_widget(self, section: str, key: str) -> Gtk.Widget | None:
+        for sec, k, _kind, widget in self._settings_fields:
+            if sec == section and k == key:
+                return widget
+        return None
+
+    @staticmethod
+    def _read_field(kind: str, widget: Gtk.Widget):
+        """Widget -> typed config value; raises ValueError on bad numeric input."""
+        if kind == "bool":
+            return widget.get_active()
+        if kind.startswith("choice:"):
+            return kind.split(":", 1)[1].split("|")[widget.get_selected()]
+        text = widget.get_text().strip()
+        if kind == "int":
+            return int(text)
+        if kind == "float":
+            return float(text)
+        if kind == "args":
+            return shlex.split(text)
+        if kind == "ints":
+            return [int(x) for x in text.replace(",", " ").split()]
+        return text  # text / path / dir
+
+    @staticmethod
+    def _write_field(kind: str, widget: Gtk.Widget, value) -> None:
+        """Config value -> widget."""
+        if kind == "bool":
+            widget.set_active(bool(value))
+        elif kind.startswith("choice:"):
+            opts = kind.split(":", 1)[1].split("|")
+            widget.set_selected(opts.index(value) if value in opts else 0)
+        elif kind == "args":
+            widget.set_text(shlex.join(value) if value else "")
+        elif kind == "ints":
+            widget.set_text(" ".join(str(x) for x in (value or [])))
+        else:
+            widget.set_text("" if value is None else str(value))
+
+    def _sync_settings(self) -> None:
+        for section, key, kind, widget in self._settings_fields:
+            dc = getattr(self.remote.cfg, section)
+            self._write_field(kind, widget, getattr(dc, key))
+        path = self.remote.cfg.path or Config.default_path()
+        self.settings_path_label.set_label(f"→ {path}")
+
+    def _on_settings_save(self, *_) -> None:
+        if self._settings_saving:
+            self._toast("Already reconnecting…")
+            return
+        cfg = self.remote.cfg
+        s = cfg.server
+        before = (s.host, s.user, s.ssh_port, s.ssh_key, tuple(s.ssh_options), s.transport)
+        # read every widget first; bail without touching cfg if anything is malformed
+        pending: dict[tuple, object] = {}
+        for section, key, kind, widget in self._settings_fields:
+            try:
+                pending[(section, key)] = self._read_field(kind, widget)
+            except ValueError:
+                self._toast(f"{key}: not a valid number", timeout=6)
+                return
+        snapshot = {sk: getattr(getattr(cfg, sk[0]), sk[1]) for sk in pending}
+
+        def rollback():
+            for (sec, key), val in snapshot.items():
+                setattr(getattr(cfg, sec), key, val)
+
+        for (sec, key), val in pending.items():
+            setattr(getattr(cfg, sec), key, val)
+        try:
+            saved = cfg.save()  # validates, then writes atomically
+        except (ConfigError, OSError) as e:
+            rollback()
+            self._toast(f"Not saved — {e}", timeout=9)
+            return
+        self._toast(f"Saved to {saved}", timeout=4)
+        self._update_llm_widgets()  # [llm] changes take effect on the AI/Chat pages now
+        after = (s.host, s.user, s.ssh_port, s.ssh_key, tuple(s.ssh_options), s.transport)
+        if after != before:
+            self._reconnect()
+        else:
+            self._refresh(full=True)
+
+    def _reconnect(self) -> None:
+        """Tear down the SSH connection so the next probe uses the new settings."""
+        self._settings_saving = True
+        self._toast("Reconnecting with the new settings…", timeout=3)
+
+        def job():
+            self.remote.close()
+            self.remote._t = None
+            self.remote._console = None
+            self.remote._ctl = None
+            return None
+
+        def finish(_=None):
+            self._settings_saving = False
+            self._adopted = False  # re-discover/adopt on the fresh connection
+            self._update_llm_widgets()
+            self._refresh(full=True)
+
+        self.worker.submit(job, finish, lambda _e: finish())
+
+    def _on_path_browse(self, widget: Adw.EntryRow, folder: bool) -> None:
+        if not hasattr(Gtk, "FileDialog"):
+            self._toast("File browser needs GTK 4.10+ — type the path manually", timeout=4)
+            return
+        dlg = Gtk.FileDialog(title="Select folder" if folder else "Select file")
+        start = (Path.home() / ".ssh") if not folder else Path.home()
+        if start.exists():
+            dlg.set_initial_folder(Gio.File.new_for_path(str(start)))
+
+        def chosen(d, result):
+            try:
+                f = d.select_folder_finish(result) if folder else d.open_finish(result)
+                if f:
+                    widget.set_text(f.get_path() or "")
+            except GLib.Error:
+                pass
+
+        if folder:
+            dlg.select_folder(self, None, chosen)
+        else:
+            dlg.open(self, None, chosen)
+
+    def _on_ollama_choose(self, button: Gtk.Button) -> None:
+        url_widget = self._field_widget("llm", "ollama_url")
+        url = (url_widget.get_text().strip() if url_widget else "") or self.remote.cfg.llm.ollama_url
+        self._toast("Querying ollama…", timeout=2)
+
+        def job():
+            saved = self.remote.cfg.llm.ollama_url
+            self.remote.cfg.llm.ollama_url = url
+            try:
+                return llm.list_ollama_models(self.remote.cfg)
+            finally:
+                self.remote.cfg.llm.ollama_url = saved
+
+        def done(names):
+            if not names:
+                self._toast("ollama has no models pulled — run `ollama pull <model>`", timeout=6)
+                return
+            self._ollama_models = names
+            self._show_ollama_popover(button, names)
+
+        def err(e):
+            self._toast(str(e).splitlines()[0], timeout=8)
+
+        self.worker.submit(job, done, err)
+
+    def _show_ollama_popover(self, button: Gtk.Button, names: list[str]) -> None:
+        pop = Gtk.Popover()
+        lb = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        lb.add_css_class("boxed-list")
+        for name in names:
+            row = Gtk.ListBoxRow()
+            row.set_child(Gtk.Label(label=name, xalign=0, margin_top=8, margin_bottom=8,
+                                    margin_start=10, margin_end=10))
+            lb.append(row)
+        # index back into `names` rather than stashing attrs on the GObject row
+        lb.connect("row-activated",
+                   lambda _lb, row: (self._pick_ollama_model(names[row.get_index()]), pop.popdown()))
+        sw = Gtk.ScrolledWindow(child=lb, propagate_natural_height=True,
+                                max_content_height=320, width_request=280)
+        pop.set_child(sw)
+        pop.set_parent(button)
+        pop.connect("closed", lambda p: p.unparent())
+        pop.popup()
+
+    def _pick_ollama_model(self, name: str) -> None:
+        w = self._field_widget("llm", "ollama_model")
+        if w:
+            w.set_text(name)
+        prov = self._field_widget("llm", "provider")  # flip to ollama for convenience
+        if prov:
+            prov.set_selected(1)  # choice:anthropic|ollama
+        self._toast(f"Selected {name} (provider → ollama). Save to apply.", timeout=5)
+
     # ------------------------------------------------------------ UI helpers
 
     def _pill(self, label: str, cb, *classes: str) -> Gtk.Button:
@@ -741,6 +1053,8 @@ class Window(Adw.ApplicationWindow):
                 st.heap_used, st.heap_committed = prev.heap_used, prev.heap_committed
                 st.heap_max = prev.heap_max
             self._apply_status(st)
+            if full and not st.errors and not self._adopted and st.running:
+                self._maybe_adopt(st)
 
         def err(e: Exception):
             self._refreshing = False
@@ -771,6 +1085,25 @@ class Window(Adw.ApplicationWindow):
             self._refresh_jvm()
         elif page == "crashes":
             self._refresh_crashes()
+        elif page == "settings":
+            self._sync_settings()
+
+    def _maybe_adopt(self, st: Status) -> None:
+        """One-shot: when the app opens onto an already-running server, connect to
+        it (adopt the live tmux session + intent) instead of treating it as foreign.
+        Pure-local — never starts/stops anything; see ServerControl.adopt."""
+        self._adopted = True
+        try:
+            note = self.remote.ctl.adopt(st)
+        except Exception:  # noqa: BLE001 - adoption is best-effort, never break the UI
+            log.debug("adopt failed", exc_info=True)
+            return
+        if note:
+            self._toast(note, timeout=6)
+            st.desired = "up"
+            self._apply_status(st)            # reflect desired=up immediately
+            if self._settings_fields:
+                self._sync_settings()         # reflect any adopted session name
 
     def _refresh_logs(self) -> None:
         if self._logs_refreshing or self._busy:
@@ -899,6 +1232,27 @@ class Window(Adw.ApplicationWindow):
         self.worker.submit(job, done, err)
 
     # ------------------------------------------------------------- AI page
+
+    def _update_llm_widgets(self) -> None:
+        """Reflect the current [llm] provider on the AI and Chat pages, so switching
+        anthropic <-> ollama (or fixing a key) in Settings takes effect immediately
+        instead of after a restart."""
+        if not (hasattr(self, "ai_run") and hasattr(self, "chat_send")):
+            return
+        ok, reason = llm.available(self.remote.cfg)
+        label = llm.provider_label(self.remote.cfg)
+        self.ai_note.set_visible(not ok)
+        self.chat_note.set_visible(not ok)
+        if not ok:
+            self.ai_note.set_label(f"AI analysis is unavailable:\n{reason}")
+            self.chat_note.set_label(f"Chat is unavailable:\n{reason}")
+        self.ai_run.set_sensitive(ok and not self._ai_running)
+        for w in (self.chat_entry, self.chat_send):
+            w.set_sensitive(ok and not self._chat_running)
+        self.ai_hint.set_label(f"Model: {label} · logs/crash text is secret-redacted and "
+                               "sent as untrusted data only.")
+        self.chat_hint.set_label(f"{label} · multi-turn; context is secret-redacted and "
+                                 "sent as untrusted data only.")
 
     def _on_inspect_ai(self, *_):
         section = inspector.SECTIONS[self.inspect_drop.get_selected()]
@@ -1550,6 +1904,7 @@ class Window(Adw.ApplicationWindow):
 
         self.row_process.set_label(
             f"pid {st.pid} · up {util.human_duration(st.uptime_s)}"
+            + (f" · tmux '{st.tmux_session}'" if st.tmux_session else "")
             + (" · dead tmux pane!" if st.pane_dead else "")
             if st.running else "not running")
         if st.players:

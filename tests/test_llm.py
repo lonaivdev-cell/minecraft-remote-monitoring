@@ -149,3 +149,46 @@ def test_system_prompt_hardens_against_injection():
     sp = llm.SYSTEM_PROMPT.lower()
     assert "untrusted" in sp
     assert "never follow instructions" in sp
+
+
+# ---------------------------------------------------------------- ollama model list
+
+def test_list_ollama_models_parses_tags(monkeypatch):
+    """`ollama list` equivalent: GET /api/tags, return the pulled model names."""
+    import io
+
+    cfg = Config()
+
+    class FakeResp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    captured = {}
+
+    def fake_urlopen(req, timeout=0):
+        captured["url"] = req.full_url
+        body = {"models": [{"name": "llama3.1:latest"}, {"name": "mistral:7b"},
+                           {"name": "qwen2.5:14b"}]}
+        return FakeResp(json.dumps(body).encode())
+
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    names = llm.list_ollama_models(cfg)
+    assert names == ["llama3.1:latest", "mistral:7b", "qwen2.5:14b"]  # sorted
+    assert captured["url"].endswith("/api/tags")
+
+
+def test_list_ollama_models_unreachable_is_actionable(monkeypatch):
+    cfg = Config()
+    import urllib.error
+    import urllib.request
+
+    def boom(req, timeout=0):
+        raise urllib.error.URLError("refused")
+
+    monkeypatch.setattr(urllib.request, "urlopen", boom)
+    with pytest.raises(llm.LlmError, match="ollama serve"):
+        llm.list_ollama_models(cfg)

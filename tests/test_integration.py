@@ -140,6 +140,49 @@ def test_start_twice_refused(sandbox):
         ctl.stop()
 
 
+def test_adopt_running_session_on_reopen(sandbox):
+    """The user's scenario: a server is already running; you (re)open mcctl — even
+    with a config that expects a *different* tmux session name (e.g. a fresh install
+    after an update) — and it discovers + connects to the live session instead of
+    forcing an ssh-in/stop/restart."""
+    from mcctl import state
+    from mcctl.console import Console
+
+    cfg = sandbox
+    t = LocalTransport(cfg)
+    ctl = ServerControl(cfg, t, Console(cfg, t))
+    ctl.start(wait=True)
+    live_session = cfg.server.tmux_session
+    try:
+        # a second config, as if we just reinstalled: same box, different session name
+        cfg2 = Config()
+        cfg2.server.transport = "local"
+        cfg2.server.server_dir = cfg.server.server_dir
+        cfg2.server.tmux_session = "name-the-config-expected"  # != the live session
+        cfg2.backup.remote_dir = cfg.backup.remote_dir
+        t2 = LocalTransport(cfg2)
+        ctl2 = ServerControl(cfg2, t2, Console(cfg2, t2))
+
+        st = ctl2.status(full=False)
+        assert st.running, "probe finds java by cwd no matter what the session is called"
+        assert st.tmux is True
+        assert st.tmux_session == live_session, "discovers the session that's actually running"
+
+        state.set_desired("down")          # pretend intent was lost across the update
+        note = ctl2.adopt(st)
+        assert note and live_session in note
+        assert cfg2.server.tmux_session == live_session   # adopted into the live config
+        assert state.load()["desired"] == "up"            # UI + watchdog now agree
+
+        # the adopted console drives the live session — proof we "connected", no restart
+        console2 = Console(cfg2, t2)
+        offset = console2.log_size()
+        console2.tmux_send("say adopted")
+        assert console2.wait_in_log(r"cmd: say adopted", offset, timeout=10, poll=0.5)
+    finally:
+        ctl.stop()
+
+
 def test_crash_leaves_inspectable_corpse(sandbox):
     """remain-on-exit keeps the dead pane; probe reports pane_dead=1."""
     cfg = sandbox

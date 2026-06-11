@@ -15,12 +15,25 @@ class ConfigError(RuntimeError):
     pass
 
 
+def _toml_val(v: object) -> str:
+    """Serialise a Python value to its TOML literal representation."""
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, str):
+        escaped = v.replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped}"'
+    if isinstance(v, list):
+        return "[" + ", ".join(_toml_val(x) for x in v) + "]"
+    return str(v)  # int / float
+
+
 @dataclass(slots=True)
 class ServerCfg:
     host: str = "144.33.19.123"
     ssh_port: int = 22
     user: str = "ubuntu"
-    ssh_options: list[str] = field(default_factory=list)  # extra raw ssh -o options
+    ssh_key: str = ""                                     # path to SSH private key (-i), e.g. ~/.ssh/carborio
+    ssh_options: list[str] = field(default_factory=list)  # extra raw ssh args / -o options
     transport: str = "ssh"                                # "ssh" | "local" (dev/test)
     server_dir: str = "/opt/minecraft"
     tmux_session: str = "minecraft"
@@ -197,6 +210,67 @@ class Config:
                 "watchdog": asdict(self.watchdog), "metrics": asdict(self.metrics),
                 "llm": asdict(self.llm), "ui": asdict(self.ui)}
 
+    # ---------------------------------------------------------------- save
+
+    def save(self, path: Path | str | None = None) -> Path:
+        """Write the *whole* config back to TOML (every section), round-trip safe.
+
+        The GUI's Settings page is the primary writer; regenerating all sections
+        — not just the ones it edits — means a partial save can never silently
+        drop e.g. the [llm] or [ui] tables. Validated before writing so we never
+        persist a config that `load()` would then reject.
+        """
+        self.validate()
+        p = Path(path) if path else (self.path or self.default_path())
+        sections = (("server", self.server), ("backup", self.backup),
+                    ("watchdog", self.watchdog), ("metrics", self.metrics),
+                    ("llm", self.llm), ("ui", self.ui))
+        lines = ["# mcctl configuration — Minecraft remote control & monitoring",
+                 "# Managed by `mcctl init` and the GUI Settings tab; hand-editing is fine too.",
+                 ""]
+        for name, dc in sections:
+            if name in _SECTION_DOC:
+                lines.append(f"# {_SECTION_DOC[name]}")
+            lines.append(f"[{name}]")
+            for f in fields(dc):
+                doc = _KEY_DOC.get(f.name)
+                if doc:
+                    lines.append(f"# {doc}")
+                lines.append(f"{f.name} = {_toml_val(getattr(dc, f.name))}")
+            lines.append("")
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(p.suffix + ".tmp")
+        tmp.write_text("\n".join(lines), encoding="utf-8")
+        tmp.replace(p)  # atomic: never leave a half-written config
+        self.path = p
+        log.info("wrote config to %s", p)
+        return p
+
+
+# ---------------------------------------------------------------- comments for save()
+
+_SECTION_DOC = {
+    "server": "SSH target + remote layout. transport='local' runs against this machine (dev/test).",
+    "backup": "Consistent world snapshots + GFS rotation.",
+    "watchdog": "Self-healing daemon thresholds and alert sinks.",
+    "metrics": "Prometheus textfile exporter (node_exporter/Grafana).",
+    "llm": "AI analysis & chat — provider='anthropic' (Claude) or 'ollama' (local).",
+    "ui": "Display preferences (log timestamp timezones).",
+}
+
+_KEY_DOC = {
+    "ssh_key": "Path to the SSH private key (-i). Empty = use ssh-agent / the default key.",
+    "ssh_options": 'Extra raw ssh args, e.g. ["-o", "IdentityFile=~/.ssh/carborio"].',
+    "transport": '"ssh" for the real server, "local" for dev/testing on this machine.',
+    "start_command": "ServerPackCreator entry point (ServerStarterJar), NOT run.sh.",
+    "stop_countdown": "In-game warning countdown (seconds) before a graceful stop.",
+    "provider": '"anthropic" (Claude API, needs the anthropic package + API key) or "ollama" (local).',
+    "api_key_env": "Env var holding the API key — mcctl never stores the key itself.",
+    "ollama_model": "Model name as `ollama pull`ed it (pick from `ollama list`).",
+    "ntfy_topic": "ntfy push topic (also a UnifiedPush distributor); empty disables push.",
+    "timezone": 'Display zone for log timestamps (IANA name, or "" to show raw server time).',
+}
+
 
 # ---------------------------------------------------------------- template
 
@@ -209,7 +283,10 @@ TEMPLATE = """\
 host = "{host}"
 ssh_port = 22
 user = "{user}"
-# Extra ssh options, e.g. ["-o", "IdentityFile=~/.ssh/carborio"]
+# Path to the SSH private key (-i). Leave empty to use ssh-agent or the default key.
+# Example: ssh_key = "~/.ssh/carborio"
+ssh_key = ""
+# Extra raw ssh args, e.g. ["-o", "IdentityFile=~/.ssh/carborio"]
 ssh_options = []
 # "ssh" for the real server, "local" runs everything against this machine (dev/testing)
 transport = "ssh"

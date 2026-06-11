@@ -70,3 +70,44 @@ def test_ui_timezone_defaults():
     cfg = Config()
     assert cfg.ui.timezone == "America/Sao_Paulo"
     assert cfg.ui.server_timezone == "UTC"
+
+
+def test_ssh_key_field_defaults_and_roundtrips(tmp_path: Path):
+    p = write_template(tmp_path / "c.toml")
+    cfg = Config.load(p)
+    assert cfg.server.ssh_key == ""              # empty by default
+    cfg.server.ssh_key = "~/.ssh/carborio"
+    cfg.save(p)
+    assert Config.load(p).server.ssh_key == "~/.ssh/carborio"
+
+
+def test_save_writes_every_section(tmp_path: Path):
+    """The GUI's save must regenerate ALL sections — a partial writer that
+    dropped [llm]/[ui] is exactly the bug that got the first attempt reverted."""
+    cfg = Config()
+    cfg.llm.provider = "ollama"
+    cfg.llm.ollama_model = "mistral"
+    cfg.ui.timezone = "Europe/Berlin"
+    cfg.server.ssh_options = ["-o", "IdentityFile=~/.ssh/k"]
+    cfg.watchdog.ntfy_topic = "secret-topic"
+    p = cfg.save(tmp_path / "out.toml")
+    text = p.read_text()
+    for section in ("[server]", "[backup]", "[watchdog]", "[metrics]", "[llm]", "[ui]"):
+        assert section in text
+    # full round-trip: load() of what save() wrote must equal the original
+    assert Config.load(p).to_dict() == cfg.to_dict()
+
+
+def test_save_roundtrips_defaults(tmp_path: Path):
+    cfg = Config()
+    p = cfg.save(tmp_path / "d.toml")
+    assert Config.load(p).to_dict() == Config().to_dict()
+
+
+def test_save_validates_before_writing(tmp_path: Path):
+    cfg = Config()
+    cfg.server.host = ""           # invalid
+    p = tmp_path / "bad.toml"
+    with pytest.raises(ConfigError):
+        cfg.save(p)
+    assert not p.exists()          # nothing half-written
