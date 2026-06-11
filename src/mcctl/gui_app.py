@@ -24,7 +24,7 @@ gi.require_version("Adw", "1")
 
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
-from . import __version__, logs, metrics, state, util  # noqa: E402
+from . import __version__, inspector, llm, logs, metrics, mods, state, util  # noqa: E402
 from .backup import BackupManager  # noqa: E402
 from .config import Config, ConfigError  # noqa: E402
 from .console import Console, ConsoleError  # noqa: E402
@@ -132,6 +132,11 @@ class Window(Adw.ApplicationWindow):
         self._online_rows: list[Gtk.Widget] = []
         self._wl_rows: list[Gtk.Widget] = []
         self._backup_rows: list[Gtk.Widget] = []
+        self._mod_rows: list[Gtk.Widget] = []
+        self._mods_refreshing = False
+        self._mods_loaded = False
+        self._inspect_refreshing = False
+        self._ai_running = False
 
         self._build_ui()
 
@@ -156,6 +161,12 @@ class Window(Adw.ApplicationWindow):
                                         "system-users-symbolic")
         self.stack.add_titled_with_icon(self._build_backups(), "backups", "Backups",
                                         "drive-harddisk-symbolic")
+        self.stack.add_titled_with_icon(self._build_mods(), "mods", "Mods",
+                                        "package-x-generic-symbolic")
+        self.stack.add_titled_with_icon(self._build_inspect(), "inspect", "Inspect",
+                                        "system-search-symbolic")
+        self.stack.add_titled_with_icon(self._build_ai(), "ai", "AI",
+                                        "starred-symbolic")
         self.stack.connect("notify::visible-child-name", lambda *_: self._refresh_aux())
 
         header = Adw.HeaderBar(
@@ -308,6 +319,84 @@ class Window(Adw.ApplicationWindow):
         return Gtk.ScrolledWindow(child=Adw.Clamp(maximum_size=760, child=box),
                                   hscrollbar_policy=Gtk.PolicyType.NEVER)
 
+    def _build_mods(self) -> Gtk.Widget:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18,
+                      margin_top=24, margin_bottom=24, margin_start=12, margin_end=12)
+        self.mods_group = Adw.PreferencesGroup(title="Installed mods",
+                                               description="Metadata read from inside each jar")
+        refresh = Gtk.Button(label="Rescan")
+        refresh.connect("clicked", lambda *_: self._refresh_mods(force=True))
+        self.mods_group.set_header_suffix(refresh)
+        box.append(self.mods_group)
+        return Gtk.ScrolledWindow(child=Adw.Clamp(maximum_size=860, child=box),
+                                  hscrollbar_policy=Gtk.PolicyType.NEVER)
+
+    def _build_inspect(self) -> Gtk.Widget:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6,
+                      margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
+        row = Gtk.Box(spacing=8)
+        self.inspect_drop = Gtk.DropDown.new_from_strings(list(inspector.SECTIONS))
+        self.inspect_drop.connect("notify::selected", lambda *_: self._refresh_inspect())
+        row.append(self.inspect_drop)
+        self.inspect_learn = Gtk.ToggleButton(label="Learn mode",
+                                              tooltip_text="Show the plain-language walkthrough "
+                                                           "of what each number means")
+        self.inspect_learn.set_active(True)
+        self.inspect_learn.connect("toggled", lambda *_: self._refresh_inspect())
+        row.append(self.inspect_learn)
+        refresh = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Re-probe")
+        refresh.connect("clicked", lambda *_: self._refresh_inspect())
+        row.append(refresh)
+        ask = Gtk.Button(label="Explain with AI")
+        ask.connect("clicked", self._on_inspect_ai)
+        row.append(ask)
+        box.append(row)
+        hint = Gtk.Label(label="Live kernel/JVM state: /proc, threads, memory maps, fds, "
+                               "sockets, jcmd — how the OS actually runs your server.",
+                         halign=Gtk.Align.START)
+        hint.add_css_class("dim-label")
+        hint.add_css_class("caption")
+        box.append(hint)
+        self.inspect_view = self._textview()
+        box.append(Gtk.ScrolledWindow(child=self.inspect_view, vexpand=True))
+        return box
+
+    def _build_ai(self) -> Gtk.Widget:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6,
+                      margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
+        ok, reason = llm.available()
+        if not ok:
+            note = Gtk.Label(label=f"AI analysis is unavailable:\n{reason}",
+                             halign=Gtk.Align.START, selectable=True)
+            note.add_css_class("dim-label")
+            box.append(note)
+        row = Gtk.Box(spacing=8)
+        self.ai_kinds = ("logs", "crash", "mods", "ask")
+        self.ai_drop = Gtk.DropDown.new_from_strings(
+            ["Review logs", "Analyze latest crash", "Explain the mods", "Ask a question"])
+        row.append(self.ai_drop)
+        self.ai_entry = Gtk.Entry(placeholder_text="Optional question — e.g. why did TPS drop "
+                                                   "around 21:30?", hexpand=True)
+        self.ai_entry.connect("activate", self._on_ai_run)
+        row.append(self.ai_entry)
+        self.ai_run = Gtk.Button(label="Analyze")
+        self.ai_run.add_css_class("suggested-action")
+        self.ai_run.connect("clicked", self._on_ai_run)
+        self.ai_run.set_sensitive(ok)
+        row.append(self.ai_run)
+        box.append(row)
+        hint = Gtk.Label(label=f"Model: {self.remote.cfg.llm.model} · logs/crash text is "
+                               "secret-redacted and sent as untrusted data only.",
+                         halign=Gtk.Align.START)
+        hint.add_css_class("dim-label")
+        hint.add_css_class("caption")
+        box.append(hint)
+        self.ai_view = self._textview()
+        self.ai_view.set_monospace(False)
+        self.ai_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        box.append(Gtk.ScrolledWindow(child=self.ai_view, vexpand=True))
+        return box
+
     # ------------------------------------------------------------ UI helpers
 
     def _pill(self, label: str, cb, *classes: str) -> Gtk.Button:
@@ -423,6 +512,10 @@ class Window(Adw.ApplicationWindow):
             self._refresh_players()
         elif page == "backups":
             self._refresh_backups()
+        elif page == "mods" and not self._mods_loaded:
+            self._refresh_mods()  # scan once; mods rarely change while we watch
+        elif page == "inspect" and self.inspect_view.get_buffer().get_char_count() == 0:
+            self._refresh_inspect()
 
     def _refresh_logs(self) -> None:
         if self._logs_refreshing or self._busy:
@@ -496,6 +589,144 @@ class Window(Adw.ApplicationWindow):
             self.backups_group.set_description(str(e)[:160])
 
         self.worker.submit(lambda: self.remote.backups.list(), done, err)
+
+    def _refresh_mods(self, *, force: bool = False) -> None:
+        if self._mods_refreshing or (self._busy and not force):
+            return
+        self._mods_refreshing = True
+        self.mods_group.set_description("Scanning jars on the server…")
+
+        def done(entries):
+            self._mods_refreshing = False
+            self._mods_loaded = True
+            total = sum(m.size for m in entries)
+            self.mods_group.set_description(
+                f"{len(entries)} mods · {util.human_bytes(total)} · metadata read from inside each jar")
+            self._mod_rows = self._swap_rows(
+                self.mods_group, self._mod_rows, [self._mod_row(m) for m in entries])
+
+        def err(e: Exception):
+            self._mods_refreshing = False
+            self.mods_group.set_description(str(e)[:160])
+
+        self.worker.submit(lambda: mods.list_mods(self.remote.t, self.remote.cfg), done, err)
+
+    def _mod_row(self, m) -> Adw.ActionRow:
+        sub = " · ".join(x for x in (m.mod_id, m.version or None,
+                                     util.human_bytes(m.size), m.file) if x)
+        row = Adw.ActionRow(title=m.name or m.file, subtitle=sub)
+        if m.description:
+            row.set_tooltip_text(m.description)
+        return row
+
+    def _refresh_inspect(self) -> None:
+        if self._inspect_refreshing:
+            return
+        self._inspect_refreshing = True
+        section = inspector.SECTIONS[self.inspect_drop.get_selected()]
+        learn = self.inspect_learn.get_active()
+
+        def job():
+            pid = None if section == "host" else self.remote.ctl.find_pid()
+            return inspector.inspect_section(self.remote.t, self.remote.cfg, section, pid)
+
+        def done(rep):
+            self._inspect_refreshing = False
+            text = f"── {rep.title} ──\n\n{rep.text}"
+            if learn:
+                text += f"\n\n── what am I looking at? ──\n{inspector.EXPLAIN[section]}"
+            self.inspect_view.get_buffer().set_text(text)
+
+        def err(e: Exception):
+            self._inspect_refreshing = False
+            self.inspect_view.get_buffer().set_text(f"(inspection failed: {e})")
+
+        self.worker.submit(job, done, err)
+
+    # ------------------------------------------------------------- AI page
+
+    def _on_inspect_ai(self, *_):
+        section = inspector.SECTIONS[self.inspect_drop.get_selected()]
+        buf = self.inspect_view.get_buffer()
+        text = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False)
+        if not text.strip():
+            self._toast("Run an inspection first")
+            return
+        self.stack.set_visible_child_name("ai")
+        self._ai_analyze("inspect", [llm.envelope(f"inspect-{section}", text)], "")
+
+    def _on_ai_run(self, *_):
+        ok, reason = llm.available()
+        if not ok:
+            self._toast(reason.splitlines()[0])
+            return
+        kind = self.ai_kinds[self.ai_drop.get_selected()]
+        question = self.ai_entry.get_text().strip()
+        if kind == "ask" and not question:
+            self._toast("Type a question first")
+            return
+
+        def gather():
+            r = self.remote
+            if kind == "logs":
+                return [llm.status_envelope(r.ctl),
+                        llm.envelope("latest.log", logs.tail(r.t, r.cfg, r.cfg.llm.log_lines)),
+                        llm.metrics_envelope()]
+            if kind == "crash":
+                name, content = logs.crash_get(r.t, r.cfg)
+                if not name:
+                    raise llm.LlmError("no crash reports on the server — nothing to analyze")
+                return [llm.envelope(f"crash-report {name}", content),
+                        llm.envelope("latest.log tail", logs.tail(r.t, r.cfg, 120))]
+            if kind == "mods":
+                return [llm.envelope("mod-list", mods.render_text(mods.list_mods(r.t, r.cfg))),
+                        llm.envelope("latest.log tail", logs.tail(r.t, r.cfg, 150))]
+            return [llm.status_envelope(r.ctl),
+                    llm.envelope("latest.log tail", logs.tail(r.t, r.cfg, 150))]
+
+        self._ai_analyze_with(gather, kind, question)
+
+    def _ai_analyze(self, kind: str, parts: list[str], question: str) -> None:
+        self._ai_analyze_with(lambda: parts, kind, question)
+
+    def _ai_analyze_with(self, gather, kind: str, question: str) -> None:
+        if self._ai_running:
+            self._toast("An analysis is already running")
+            return
+        self._ai_running = True
+        self.ai_run.set_sensitive(False)
+        self.ai_view.get_buffer().set_text(f"Gathering context, asking {self.remote.cfg.llm.model}…\n\n")
+        first_chunk = [True]
+
+        def stream_chunk(s: str):
+            def apply():
+                if first_chunk[0]:
+                    first_chunk[0] = False
+                    self.ai_view.get_buffer().set_text("")
+                self._append_text_raw(self.ai_view, s)
+                return False
+            GLib.idle_add(apply)
+
+        def job():
+            parts = gather()
+            return llm.Analyst(self.remote.cfg).analyze(
+                kind, parts, question=question, on_text=stream_chunk)
+
+        def done(_text):
+            self._ai_running = False
+            self.ai_run.set_sensitive(llm.available()[0])
+
+        def err(e: Exception):
+            self._ai_running = False
+            self.ai_run.set_sensitive(llm.available()[0])
+            self.ai_view.get_buffer().set_text(f"Analysis failed:\n{e}")
+
+        self.worker.submit(job, done, err)
+
+    def _append_text_raw(self, view: Gtk.TextView, text: str) -> None:
+        buf = view.get_buffer()
+        buf.insert(buf.get_end_iter(), text)
+        self._scroll_to_end(view)
 
     def _swap_rows(self, group: Adw.PreferencesGroup, old: list, new: list) -> list:
         for r in old:
