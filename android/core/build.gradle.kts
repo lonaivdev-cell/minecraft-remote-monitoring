@@ -24,7 +24,9 @@ dependencies {
 
     // SSH transport. sshj is pure-JVM and works on Android; eddsa supplies the same
     // Ed25519 implementation sshj uses, and BouncyCastle the host-key primitives.
-    implementation(libs.sshj)
+    // sshj is `api`: the app constructs the transport/verifier, so its public sshj types
+    // (e.g. HostKeyVerifier) must be on the app's compile classpath.
+    api(libs.sshj)
     implementation(libs.eddsa)
     implementation(libs.bouncycastle)
     implementation(libs.slf4j.api)

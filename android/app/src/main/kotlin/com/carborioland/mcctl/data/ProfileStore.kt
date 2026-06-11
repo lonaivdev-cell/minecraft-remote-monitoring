@@ -19,11 +19,11 @@ class ProfileStore(private val context: Context) {
     private val key = stringPreferencesKey("profile_json")
 
     val profile: Flow<ConnectionProfile> = context.profileDataStore.data.map { prefs ->
-        prefs[key]?.let { runCatching { json.decodeFromString<ConnectionProfile>(it) }.getOrNull() }
+        prefs[key]?.let { runCatching { json.decodeFromString(ConnectionProfile.serializer(), it) }.getOrNull() }
             ?: ConnectionProfile()
     }
 
     suspend fun save(profile: ConnectionProfile) {
-        context.profileDataStore.edit { it[key] = json.encodeToString(profile) }
+        context.profileDataStore.edit { it[key] = json.encodeToString(ConnectionProfile.serializer(), profile) }
     }
 }

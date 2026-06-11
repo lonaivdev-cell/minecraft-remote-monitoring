@@ -1,14 +1,12 @@
 package com.carborioland.mcctl
 
 import android.app.Application
+import com.carborioland.mcctl.core.ssh.SecurityProvider
 import com.carborioland.mcctl.di.AppContainer
-import org.bouncycastle.jce.provider.BouncyCastleProvider
-import java.security.Security
 
 /**
- * Application entry point. Swaps Android's stripped-down "BC" provider for the full
- * BouncyCastle build so sshj can negotiate modern ciphers, KEX and host-key algorithms
- * with a real OpenSSH server (the platform provider lacks several of them).
+ * Application entry point. Installs the full BouncyCastle security provider (so sshj can
+ * negotiate modern ciphers/KEX/host-key algorithms) and builds the DI container.
  */
 class McctlApp : Application() {
 
@@ -17,8 +15,7 @@ class McctlApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        Security.removeProvider("BC")
-        Security.insertProviderAt(BouncyCastleProvider(), 1)
+        SecurityProvider.install()
         container = AppContainer(this)
     }
 }
