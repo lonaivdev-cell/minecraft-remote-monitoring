@@ -18,19 +18,19 @@ Option B keeps the phone as a *renderer*: the tested Python core (watchdog
 semantics, backup safety, fish-proof remote scripting) remains the single
 source of truth. The RPC surface is the existing `--json` payloads, formalized.
 
-### Phase 0 — API extraction (in this repo)  → **scheduled: v0.5.0** (see [DESIGN-0.5.0.md](DESIGN-0.5.0.md))
-- [ ] `mcctl agent` subcommand: long-lived JSON-RPC 2.0 loop on stdin/stdout
-      (methods: `status`, `start`, `stop`, `backup.create`, `backup.list`,
-      `tps`, `health`, `players`, `cmd`, `logs.tail`, `watchdog.state`).
-- [ ] Version-stamped schema (`mcctl agent --schema`) generated from the
-      dataclasses; golden-file tests so the contract can't drift silently.
-- [ ] Long-poll `events` method: watchdog actions/alerts streamed as they happen
-      (backed by a shared `events.jsonl` journal; also surfaced as `mcctl events`).
-- [ ] **ntfy / UnifiedPush push bridge** — pulled forward from Phase 2: add the
-      `ntfy_*` sink to `util.notify()` now, so watchdog alerts reach a phone and
-      the future app gets push for free.
-- [ ] **Prometheus textfile exporter** (`mcctl metrics export` + timer) — the
-      backlog Grafana item, shipped with the agent.
+### Phase 0 — API extraction (in this repo)  → **DONE in v0.5.0** (see [DESIGN-0.5.0.md](DESIGN-0.5.0.md))
+- [x] `mcctl agent` subcommand: long-lived JSON-RPC 2.0 loop on stdin/stdout
+      (status, start/stop/restart/kill, save, cmd, tps/health/profile/purge,
+      players.*, backup.*, logs.tail, props.*, jvm.*, mods.list, inspect,
+      watchdog.*, metrics.history, events.*).
+- [x] Version-stamped schema (`mcctl agent --schema`) generated from the
+      dataclasses; golden-file test (`tests/test_agent_schema.py`) so the
+      contract can't drift silently without bumping `AGENT_PROTOCOL`.
+- [x] `events.subscribe` stream + shared `events.jsonl` journal; also surfaced
+      as `mcctl events [-f]`.
+- [x] **ntfy / UnifiedPush push bridge** — `ntfy_*` sink in `util.notify()`;
+      watchdog alerts reach a phone and the future app gets push for free.
+- [x] **Prometheus textfile exporter** (`mcctl metrics export` + `mcctl-metrics.timer`).
 
 ### Phase 1 — Android MVP (read-mostly)
 - [ ] Kotlin + Jetpack Compose; sshj with **Ed25519 device key** generated in

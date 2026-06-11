@@ -63,6 +63,16 @@ class WatchdogCfg:
     auto_profile_on_lag: bool = False                     # auto-run spark profiler on low TPS
     notify_desktop: bool = True
     webhook_url: str = ""                                 # Discord-compatible, optional
+    ntfy_url: str = "https://ntfy.sh"                     # ntfy server (also a UnifiedPush distributor)
+    ntfy_topic: str = ""                                  # empty disables ntfy push
+    ntfy_token: str = ""                                  # optional bearer for protected topics
+
+
+@dataclass(slots=True)
+class MetricsCfg:
+    # Prometheus textfile exporter target; point node_exporter's
+    # --collector.textfile.directory at the directory holding this file.
+    prom_path: str = ""                                   # "" => $XDG_STATE_HOME/mcctl/mcctl.prom
 
 
 @dataclass(slots=True)
@@ -89,6 +99,7 @@ class Config:
     server: ServerCfg = field(default_factory=ServerCfg)
     backup: BackupCfg = field(default_factory=BackupCfg)
     watchdog: WatchdogCfg = field(default_factory=WatchdogCfg)
+    metrics: MetricsCfg = field(default_factory=MetricsCfg)
     llm: LlmCfg = field(default_factory=LlmCfg)
     ui: UiCfg = field(default_factory=UiCfg)
     path: Path | None = None
@@ -113,7 +124,8 @@ class Config:
         except (OSError, tomllib.TOMLDecodeError) as e:
             raise ConfigError(f"cannot read {p}: {e}") from e
         for section, dc in (("server", cfg.server), ("backup", cfg.backup),
-                            ("watchdog", cfg.watchdog), ("llm", cfg.llm), ("ui", cfg.ui)):
+                            ("watchdog", cfg.watchdog), ("metrics", cfg.metrics),
+                            ("llm", cfg.llm), ("ui", cfg.ui)):
             data = raw.get(section, {})
             if not isinstance(data, dict):
                 raise ConfigError(f"[{section}] must be a table")
@@ -124,7 +136,7 @@ class Config:
                     continue
                 setattr(dc, k, v)
         for section in raw:
-            if section not in ("server", "backup", "watchdog", "llm", "ui"):
+            if section not in ("server", "backup", "watchdog", "metrics", "llm", "ui"):
                 log.warning("config: unknown section [%s] ignored", section)
         cfg.validate()
         return cfg
@@ -156,6 +168,8 @@ class Config:
             problems.append("watchdog.interval must be >= 5s")
         if w.max_restarts < 1:
             problems.append("watchdog.max_restarts must be >= 1")
+        if w.ntfy_topic and not w.ntfy_url:
+            problems.append("watchdog.ntfy_url must be set when ntfy_topic is given")
         llm = self.llm
         if llm.provider not in ("anthropic", "ollama"):
             problems.append("llm.provider must be 'anthropic' or 'ollama'")
@@ -180,8 +194,8 @@ class Config:
 
     def to_dict(self) -> dict:
         return {"server": asdict(self.server), "backup": asdict(self.backup),
-                "watchdog": asdict(self.watchdog), "llm": asdict(self.llm),
-                "ui": asdict(self.ui)}
+                "watchdog": asdict(self.watchdog), "metrics": asdict(self.metrics),
+                "llm": asdict(self.llm), "ui": asdict(self.ui)}
 
 
 # ---------------------------------------------------------------- template
@@ -247,6 +261,19 @@ auto_profile_on_lag = false
 notify_desktop = true
 # Discord-compatible webhook for crash/restart/alert messages, e.g. co-op channel.
 webhook_url = ""
+# ntfy push (https://ntfy.sh or self-hosted). ntfy is also a UnifiedPush
+# distributor, so a topic here gives the phone app push for free. Leave
+# ntfy_topic empty to disable. The topic is a public namespace on ntfy.sh —
+# use an unguessable name, a self-hosted server, or an ntfy_token.
+ntfy_url = "https://ntfy.sh"
+ntfy_topic = ""
+ntfy_token = ""
+
+[metrics]
+# Prometheus textfile exporter (`mcctl metrics export`, mcctl-metrics.timer).
+# Point node_exporter --collector.textfile.directory at this file's directory.
+# Empty => $XDG_STATE_HOME/mcctl/mcctl.prom.
+prom_path = ""
 
 [llm]
 # AI log/crash/mod analysis & chat (`mcctl ai …`, GUI "AI"/"Chat" pages).

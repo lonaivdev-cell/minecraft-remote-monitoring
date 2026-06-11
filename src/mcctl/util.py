@@ -201,9 +201,16 @@ def save_json(path: Path, obj) -> None:
 
 # ---------------------------------------------------------------- notifications
 
+# ntfy priority by urgency: critical => "urgent"(5), normal => "default"(3).
+_NTFY_PRIORITY = {"critical": "urgent", "low": "low", "normal": "default"}
+_NTFY_TAGS = {"critical": "rotating_light", "normal": "warning", "low": "information_source"}
+
+
 def notify(title: str, body: str, *, desktop: bool = True, webhook_url: str = "",
+           ntfy_url: str = "", ntfy_topic: str = "", ntfy_token: str = "",
            urgency: str = "normal") -> None:
-    """Best-effort alerting: desktop notify-send and/or a Discord-compatible webhook."""
+    """Best-effort alerting: desktop notify-send, a Discord-compatible webhook,
+    and/or an ntfy topic (which is also a UnifiedPush distributor → phone push)."""
     if desktop and shutil.which("notify-send"):
         try:
             subprocess.run(
@@ -222,6 +229,22 @@ def notify(title: str, body: str, *, desktop: bool = True, webhook_url: str = ""
             urllib.request.urlopen(req, timeout=5)  # noqa: S310 - user-configured URL
         except Exception as e:  # noqa: BLE001
             log.warning("webhook notification failed: %s", e)
+    if ntfy_url and ntfy_topic:
+        try:
+            url = ntfy_url.rstrip("/") + "/" + ntfy_topic.lstrip("/")
+            # Title/Tags headers must be latin-1-safe; ntfy reads them as ASCII.
+            headers = {
+                "User-Agent": APP,
+                "Title": title.encode("ascii", "replace").decode("ascii"),
+                "Priority": _NTFY_PRIORITY.get(urgency, "default"),
+                "Tags": _NTFY_TAGS.get(urgency, "warning"),
+            }
+            if ntfy_token:
+                headers["Authorization"] = f"Bearer {ntfy_token}"
+            req = urllib.request.Request(url, data=body.encode("utf-8"), headers=headers)
+            urllib.request.urlopen(req, timeout=5)  # noqa: S310 - user-configured URL
+        except Exception as e:  # noqa: BLE001
+            log.warning("ntfy notification failed: %s", e)
 
 
 # ---------------------------------------------------------------- systemd units

@@ -853,6 +853,72 @@ def cmd_gui(ctx: Ctx) -> int:
     return gui_main(argv)
 
 
+def cmd_agent(ctx: Ctx) -> int:
+    from . import agent
+    if ctx.args.schema:
+        print(json.dumps(agent.build_schema(), indent=2, sort_keys=True))
+        return 0
+    return agent.serve(ctx)
+
+
+def _print_event(ev: dict) -> None:
+    import datetime as _dt
+    when = _dt.datetime.fromtimestamp(ev.get("ts", 0)).strftime("%Y-%m-%d %H:%M:%S")
+    color = "red" if ev.get("urgency") == "critical" else "cyan"
+    kind = ev.get("kind", "?")
+    rc.print(f"[dim]{when}[/dim] [{color}]{kind:<16}[/{color}] {ev.get('detail', '')}")
+
+
+def cmd_events(ctx: Ctx) -> int:
+    from . import events
+    since = time.time() - ctx.args.since if ctx.args.since else None
+    if ctx.args.follow:
+        for ev in events.follow(since=since if since is not None else time.time()):
+            _print_event(ev)
+        return 0
+    evs = events.read(since=since, limit=None if since is not None else ctx.args.n)
+    if ctx.args.json:
+        print(json.dumps(evs, indent=2))
+        return 0
+    if not evs:
+        rc.print("[dim]no events recorded yet[/dim]")
+        return 0
+    for ev in evs:
+        _print_event(ev)
+    return 0
+
+
+def cmd_metrics(ctx: Ctx) -> int:
+    from . import prometheus
+    sub = ctx.args.metrics_cmd or "export"
+    if sub == "export":
+        out = ctx.args.out or (ctx.cfg.metrics.prom_path or None)
+        p = prometheus.export(ctx.cfg, out=out)
+        if ctx.args.cat:
+            print(p.read_text(encoding="utf-8"), end="")
+        else:
+            rc.print(f"[green]wrote[/green] {p}")
+        return 0
+    return 2
+
+
+def cmd_notify_test(ctx: Ctx) -> int:
+    w = ctx.cfg.watchdog
+    util.notify("mcctl: test alert", "If you can read this, mcctl alerting works.",
+                desktop=w.notify_desktop, webhook_url=w.webhook_url,
+                ntfy_url=w.ntfy_url, ntfy_topic=w.ntfy_topic, ntfy_token=w.ntfy_token,
+                urgency="normal")
+    sinks = []
+    if w.notify_desktop:
+        sinks.append("desktop")
+    if w.webhook_url:
+        sinks.append("webhook")
+    if w.ntfy_topic:
+        sinks.append(f"ntfy:{w.ntfy_url.rstrip('/')}/{w.ntfy_topic}")
+    rc.print("test alert dispatched to: " + (", ".join(sinks) or "[yellow]no sinks configured[/yellow]"))
+    return 0
+
+
 # ================================================================ parser
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1099,6 +1165,29 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("gui", help="GTK4/libadwaita desktop app (also installed as mcctl-gui)")
     sp.set_defaults(func=cmd_gui)
+
+    sp = sub.add_parser("agent", help="JSON-RPC 2.0 server over stdio (for the phone app / scripts)")
+    sp.add_argument("--schema", action="store_true",
+                    help="print the versioned contract and exit (no server)")
+    sp.set_defaults(func=cmd_agent)
+
+    sp = sub.add_parser("events", help="watchdog/heal/alert event journal (tail or follow)")
+    sp.add_argument("-f", "--follow", action="store_true", help="stream new events as they happen")
+    sp.add_argument("-n", type=int, default=30, help="how many recent events to show")
+    sp.add_argument("--since", type=float, default=0.0, metavar="SECS",
+                    help="only events from the last N seconds")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_events)
+
+    sp = sub.add_parser("metrics", help="Prometheus textfile exporter (node_exporter/Grafana)")
+    msub = nested(sp, "metrics_cmd")
+    me = msub.add_parser("export", help="write the latest sample as a .prom textfile (default)")
+    me.add_argument("--out", help="output path (default: [metrics].prom_path or state dir)")
+    me.add_argument("--cat", action="store_true", help="also print the rendered file to stdout")
+    sp.set_defaults(func=cmd_metrics, metrics_cmd=None, out=None, cat=False)
+
+    sp = sub.add_parser("notify-test", help="fire a test alert through every configured sink")
+    sp.set_defaults(func=cmd_notify_test)
 
     return p
 
