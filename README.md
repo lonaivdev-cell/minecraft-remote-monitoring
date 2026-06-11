@@ -28,7 +28,7 @@ mcctl init  →  mcctl doctor  →  mcctl start  →  mcctl dash
 | `mcctl status [--json] [--fast]` | process/tmux/port/players/TPS/heap/host RAM/disk/backup age, one screen |
 | `mcctl start` / `stop` / `restart` | tmux + `start.sh` boot with readiness detection; graceful stop: player countdown → `save-all flush` → `stop` → SIGTERM → SIGKILL escalation |
 | `mcctl dash` | live TUI: TPS sparkline, heap/RAM gauges, log tail; keys for save/backup/purge/start/stop |
-| `mcctl gui` / `mcctl-gui` | native GTK4/libadwaita desktop app (sidebar, 16 pages): live status & actions, TPS/heap/players history charts, console, logs, players, backups, mods, OS/JVM inspector (learn mode), AI analysis, AI chat, doctor with safe fixes, validated server.properties editor, JVM settings, crash reports + evidence bundles, spark profiler, config sync |
+| `mcctl gui` / `mcctl-gui` | native GTK4/libadwaita desktop app (sidebar, 17 pages): live status & actions, TPS/heap/players history charts, console, logs, players, backups, mods, OS/JVM inspector (learn mode), AI analysis, AI chat, doctor with safe fixes, validated server.properties editor, JVM settings, crash reports + evidence bundles, spark profiler, config sync, and a **Settings** editor for the whole config.toml (SSH key + flags, ollama model picker, every section) — no hand-editing required. Opening the app onto an already-running server auto-connects to its live tmux session instead of forcing a restart |
 | `mcctl watch` | line-oriented live monitor: one compact status line per interval (state/players/TPS/MSPT/heap/RAM/load), scrollable and greppable; records metric history as it runs |
 | `mcctl history [tps\|mspt\|heap\|players\|mem\|load\|all]` | terminal charts of recorded metric history with min/avg/max/last summaries |
 | `mcctl trace [--learn]` | live JVM GC tracer (`jstat -gcutil`): young/full collections, pause times, eden/old/metaspace occupancy — watch how the JVM manages memory, with a learn-mode walkthrough |
@@ -95,6 +95,10 @@ mcctl ai logs                         # sanity check
 mcctl ai chat                         # interactive conversation
 ```
 
+In the GUI you don't have to edit the file: open **Settings → AI / LLM**, flip the
+provider, and pick the model straight from a list of everything `ollama` has pulled
+(it queries ollama's `/api/tags`, the `ollama list` set).
+
 Whichever backend you pick, everything sent to it is secret-redacted
 (rcon.password, token-looking env values) and wrapped as untrusted data — the
 system prompt explicitly refuses instructions embedded in logs, because this
@@ -153,6 +157,9 @@ crash report) land in `~/.local/state/mcctl/crashes/` before every heal.
 - All remote output (logs, crash reports, console replies) is stripped of ANSI/OSC
   escape sequences before printing — remote text can't drive your terminal.
 - SSH runs with `BatchMode=yes` (keys/agent only) and `accept-new` host keys.
+  Your `~/.ssh/config`, agent and default keys are used as-is; to pin a specific
+  key set `[server].ssh_key` (or edit it in the GUI's Settings tab) — mcctl then
+  passes `ssh -i <key> -o IdentitiesOnly=yes`.
 - Heads-up: crash logs from this modpack are known to contain embedded
   prompt-injection text. It's inert noise — read the stack trace, ignore the prose.
 

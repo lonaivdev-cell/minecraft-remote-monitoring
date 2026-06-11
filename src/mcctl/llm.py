@@ -135,6 +135,27 @@ def _adaptive_ok(model: str) -> bool:
     return bool(re.search(r"(opus-4-[678]|sonnet-4-6|fable|mythos)", model))
 
 
+def list_ollama_models(cfg: Config) -> list[str]:
+    """Names of the models a local ollama has pulled — the `ollama list` set.
+
+    Queries ollama's /api/tags over plain HTTP (stdlib only, no client package),
+    so the Settings page can offer a pick-list instead of a free-text field.
+    Raises LlmError with an actionable hint when ollama can't be reached."""
+    import urllib.error
+    import urllib.request
+    url = cfg.llm.ollama_url.rstrip("/") + "/api/tags"
+    req = urllib.request.Request(url, headers={"User-Agent": "mcctl"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310 - local, user-configured
+            data = json.loads(resp.read().decode("utf-8", "replace"))
+    except (urllib.error.URLError, ConnectionError, OSError, TimeoutError, ValueError) as e:
+        raise LlmError(
+            f"cannot reach ollama at {cfg.llm.ollama_url} — is it running (`ollama serve`)? "
+            f"check [llm].ollama_url. ({e})") from e
+    names = sorted(m.get("name", "") for m in data.get("models", []) if m.get("name"))
+    return names
+
+
 # ---------------------------------------------------------------- backends
 
 class _AnthropicBackend:

@@ -162,3 +162,63 @@ def test_stop_when_already_down(cfg, fake_t):
     fake_t.expect(_pid_matcher, out="")
     ServerControl(cfg, fake_t).stop()  # no exception, desired flips
     assert state.load()["desired"] == "down"
+
+
+# ---------------------------------------------------------------- session discovery + adopt
+
+PROBE_OUT_FOREIGN_SESSION = """\
+pid=4242
+etimes=3661
+host_session=mc-old
+tmux=0
+port=1
+log_age=4
+mem=24000000000 12000000000 11000000000
+load=1.20 0.90 0.70
+disk_free=42000000000
+"""
+
+
+def test_status_discovers_hosting_session(cfg, fake_t):
+    """A running server whose tmux session is named differently than the config
+    still reports running + the discovered session name (name-independent probe)."""
+    fake_t.expect(_probe_matcher, out=PROBE_OUT_FOREIGN_SESSION)
+    fake_t.files[f"{cfg.server.server_dir}/server.properties"] = "enable-rcon=false\n"
+    st = ServerControl(cfg, fake_t).status(full=False)
+    assert st.running and st.pid == 4242
+    assert st.tmux is True                       # even though has-session said 0
+    assert st.tmux_session == "mc-old"
+
+
+def test_status_uses_config_session_when_no_discovery(cfg, fake_t):
+    fake_t.expect(_probe_matcher, out=PROBE_OUT_UP)  # tmux=1, no host_session line
+    st = ServerControl(cfg, fake_t).status(full=False)
+    assert st.tmux_session == cfg.server.tmux_session  # "minecraft"
+
+
+def test_adopt_running_reconciles_session_and_intent(cfg, fake_t):
+    from mcctl.server import Status
+    state.set_desired("down")
+    st = Status(running=True, pid=4242, tmux=True, tmux_session="mc-old")
+    note = ServerControl(cfg, fake_t).adopt(st)
+    assert note and "mc-old" in note
+    assert cfg.server.tmux_session == "mc-old"   # console now targets the live session
+    assert state.load()["desired"] == "up"       # UI + watchdog agree it's up
+
+
+def test_adopt_noop_when_down(cfg, fake_t):
+    from mcctl.server import Status
+    state.set_desired("down")
+    note = ServerControl(cfg, fake_t).adopt(Status(running=False))
+    assert note is None
+    assert state.load()["desired"] == "down"     # never flips intent for a dead server
+
+
+def test_adopt_only_intent_when_session_matches(cfg, fake_t):
+    from mcctl.server import Status
+    state.set_desired("down")
+    st = Status(running=True, pid=4242, tmux=True, tmux_session=cfg.server.tmux_session)
+    note = ServerControl(cfg, fake_t).adopt(st)
+    assert note and "up" in note
+    assert "session" not in note                 # nothing to adopt there
+    assert state.load()["desired"] == "up"

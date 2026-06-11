@@ -127,7 +127,8 @@ def cmd_status(ctx: Ctx) -> int:
     table.add_column()
     table.add_row("process", f"pid {st.pid}, up {util.human_duration(st.uptime_s)}"
                   if st.running else "not running")
-    table.add_row("tmux", ("session up" + (" [red](dead pane)[/red]" if st.pane_dead else ""))
+    table.add_row("tmux", ((f"session '{st.tmux_session}'" if st.tmux_session else "session up")
+                            + (" [red](dead pane)[/red]" if st.pane_dead else ""))
                   if st.tmux else "no session")
     table.add_row("port", f"{ctx.cfg.server.mc_port} " + ("open" if st.port_open else "[red]closed[/red]"))
     if st.players:
