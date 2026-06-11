@@ -18,13 +18,19 @@ Option B keeps the phone as a *renderer*: the tested Python core (watchdog
 semantics, backup safety, fish-proof remote scripting) remains the single
 source of truth. The RPC surface is the existing `--json` payloads, formalized.
 
-### Phase 0 — API extraction (in this repo)
-- [ ] `mcctl agent` subcommand: long-lived JSON-RPC 2.0 loop on stdin/stdout
-      (methods: `status`, `start`, `stop`, `backup.create`, `backup.list`,
-      `tps`, `health`, `players`, `cmd`, `logs.tail`, `watchdog.state`).
-- [ ] Version-stamped schema (`mcctl agent --schema`) generated from the
-      dataclasses; golden-file tests so the contract can't drift silently.
-- [ ] Long-poll `events` method: watchdog actions/alerts streamed as they happen.
+### Phase 0 — API extraction (in this repo)  → **DONE in v0.5.0** (see [DESIGN-0.5.0.md](DESIGN-0.5.0.md))
+- [x] `mcctl agent` subcommand: long-lived JSON-RPC 2.0 loop on stdin/stdout
+      (status, start/stop/restart/kill, save, cmd, tps/health/profile/purge,
+      players.*, backup.*, logs.tail, props.*, jvm.*, mods.list, inspect,
+      watchdog.*, metrics.history, events.*).
+- [x] Version-stamped schema (`mcctl agent --schema`) generated from the
+      dataclasses; golden-file test (`tests/test_agent_schema.py`) so the
+      contract can't drift silently without bumping `AGENT_PROTOCOL`.
+- [x] `events.subscribe` stream + shared `events.jsonl` journal; also surfaced
+      as `mcctl events [-f]`.
+- [x] **ntfy / UnifiedPush push bridge** — `ntfy_*` sink in `util.notify()`;
+      watchdog alerts reach a phone and the future app gets push for free.
+- [x] **Prometheus textfile exporter** (`mcctl metrics export` + `mcctl-metrics.timer`).
 
 ### Phase 1 — Android MVP (read-mostly)
 - [ ] Kotlin + Jetpack Compose; sshj with **Ed25519 device key** generated in
@@ -40,6 +46,7 @@ source of truth. The RPC surface is the existing `--json` payloads, formalized.
       network change (SSH channel re-establish + idempotent RPC ids).
 - [ ] Push alerts: tiny UnifiedPush/ntfy bridge — watchdog already has the
       webhook hook; add `ntfy_url` config alongside `webhook_url`.
+      *(server-side bridge pulled forward to v0.5.0; here = app subscription side)*
 
 ### Phase 3 — polish
 - [ ] spark profiler launcher with result URL → in-app browser.
@@ -62,6 +69,6 @@ source of truth. The RPC surface is the existing `--json` payloads, formalized.
 ## Backlog (nice-to-have, unscheduled)
 - [ ] `mcctl mods` — list server mods with versions; diff client vs server pack.
 - [ ] The Hordes deployment helper (planned pack addition).
-- [ ] Prometheus textfile exporter from `metrics.jsonl` for Grafana.
+- [x] Prometheus textfile exporter from `metrics.jsonl` for Grafana. *(scheduled: v0.5.0)*
 - [ ] `mcctl backup restore --to <dir>` for side-by-side world inspection.
 - [ ] Off-site backup hook (rclone to OCI Object Storage) after local rotation.

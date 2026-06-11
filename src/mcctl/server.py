@@ -18,7 +18,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from . import state, util
+from . import events, state, util
 from .config import Config
 from .console import Console, ConsoleError, PlayerList
 from .transport import BaseTransport, TransportError, q
@@ -213,6 +213,7 @@ class ServerControl:
         state.set_desired("up")
         log.info("server launch dispatched (tmux session %s)", s.tmux_session)
         if not wait:
+            events.emit("started", "launch dispatched (not waiting for ready)")
             return
 
         deadline = time.monotonic() + s.start_timeout
@@ -228,6 +229,7 @@ class ServerControl:
                 progress(last_line)
             if re.search(READY_RE, delta):
                 log.info("server is up: %s", last_line)
+                events.emit("started", "server reported ready")
                 return
             if "You need to agree to the EULA" in delta:
                 raise ServerError("server exited: EULA not accepted")
@@ -275,12 +277,14 @@ class ServerControl:
         if self._wait_pid_gone(pid, self.cfg.server.stop_timeout):
             log.info("server stopped gracefully")
             self._reap_session()
+            events.emit("stopped", reason or "graceful stop")
             return
 
         log.warning("graceful stop timed out after %ss — escalating to SIGTERM", s.stop_timeout)
         self.t.run(f"kill -TERM {pid} 2>/dev/null || true", timeout=15)
         if self._wait_pid_gone(pid, 30):
             self._reap_session()
+            events.emit("stopped", "stopped via SIGTERM (graceful stop timed out)")
             return
 
         log.error("SIGTERM ignored — escalating to SIGKILL (world saved earlier via save-all)")
@@ -288,6 +292,7 @@ class ServerControl:
         if not self._wait_pid_gone(pid, 15):
             raise ServerError(f"process {pid} survived SIGKILL — inspect the host manually")
         self._reap_session()
+        events.emit("stopped", "stopped via SIGKILL", urgency="critical")
 
     def _wait_pid_gone(self, pid: int, timeout: float) -> bool:
         deadline = time.monotonic() + timeout

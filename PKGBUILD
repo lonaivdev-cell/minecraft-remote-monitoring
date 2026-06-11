@@ -1,7 +1,7 @@
 # Maintainer: CarborioLand <lorenzods.ls1@gmail.com>
 # Local/dev PKGBUILD: build straight from this checkout with `makepkg -si`.
 pkgname=mcctl
-pkgver=0.4.0
+pkgver=0.5.0
 pkgrel=1
 pkgdesc="Remote control & monitoring for a modded Minecraft server over SSH (tmux + ServerStarterJar launch model)"
 arch=('any')
@@ -44,6 +44,10 @@ package() {
         "$pkgdir/usr/lib/systemd/user/mcctl-backup.service"
     install -Dm644 src/mcctl/units/mcctl-backup.timer \
         "$pkgdir/usr/lib/systemd/user/mcctl-backup.timer"
+    install -Dm644 src/mcctl/units/mcctl-metrics.service \
+        "$pkgdir/usr/lib/systemd/user/mcctl-metrics.service"
+    install -Dm644 src/mcctl/units/mcctl-metrics.timer \
+        "$pkgdir/usr/lib/systemd/user/mcctl-metrics.timer"
     install -Dm644 completions/mcctl.fish \
         "$pkgdir/usr/share/fish/vendor_completions.d/mcctl.fish"
     install -Dm644 data/io.github.lonaivdev_cell.mcctl.desktop \

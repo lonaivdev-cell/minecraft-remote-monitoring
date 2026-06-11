@@ -166,6 +166,6 @@ def test_watchdog_install_writes_units_to_xdg(isolated_xdg, capsys):
     from mcctl.cli import _install_units
     assert _install_units() == 0
     written = sorted(p.name for p in util.user_unit_dir().iterdir())
-    assert "mcctl-watchdog.service" in written and len(written) == 5
+    assert "mcctl-watchdog.service" in written and len(written) == 7
     text = (util.user_unit_dir() / "mcctl-backup.service").read_text()
     assert "backup create --notify" in text

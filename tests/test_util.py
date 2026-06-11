@@ -10,6 +10,37 @@ def test_sanitize_strips_ansi_and_controls():
     assert "red" in clean and "keep" in clean and "\n" in clean and "\t" in clean
 
 
+def test_notify_ntfy_posts_when_topic_set(monkeypatch):
+    seen = {}
+
+    def fake_urlopen(req, timeout=0):
+        seen["url"] = req.full_url
+        seen["data"] = req.data
+        seen["headers"] = {k.lower(): v for k, v in req.headers.items()}
+        class _R:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+        return _R()
+
+    monkeypatch.setattr(util.urllib.request, "urlopen", fake_urlopen)
+    util.notify("title", "body text", desktop=False,
+                ntfy_url="https://ntfy.example", ntfy_topic="mytopic",
+                ntfy_token="tok", urgency="critical")
+    assert seen["url"] == "https://ntfy.example/mytopic"
+    assert seen["data"] == b"body text"
+    assert seen["headers"]["title"] == "title"
+    assert seen["headers"]["priority"] == "urgent"
+    assert seen["headers"]["authorization"] == "Bearer tok"
+
+
+def test_notify_ntfy_skipped_without_topic(monkeypatch):
+    called = {"n": 0}
+    monkeypatch.setattr(util.urllib.request, "urlopen",
+                        lambda *a, **k: called.__setitem__("n", called["n"] + 1))
+    util.notify("t", "b", desktop=False, ntfy_url="https://ntfy.example", ntfy_topic="")
+    assert called["n"] == 0
+
+
 def test_strip_mc_codes():
     assert util.strip_mc_codes("§a20.0§7, §e15.2") == "20.0, 15.2"
 
@@ -45,12 +76,13 @@ def test_json_state_roundtrip(tmp_path):
 
 # ---------------------------------------------------------------- systemd units
 
-def test_render_units_ships_all_five():
+def test_render_units_ships_all_units():
     from mcctl import util
     units = util.render_units()
     assert set(units) == {"mcctl-watchdog.service", "mcctl-autosave.service",
                           "mcctl-autosave.timer", "mcctl-backup.service",
-                          "mcctl-backup.timer"}
+                          "mcctl-backup.timer", "mcctl-metrics.service",
+                          "mcctl-metrics.timer"}
 
 
 def test_render_units_rewrites_execstart_for_pipx():

@@ -18,7 +18,7 @@ import enum
 import time
 from dataclasses import dataclass
 
-from . import logs, metrics, state, util
+from . import events, logs, metrics, state, util
 from .config import Config
 from .console import Console, ConsoleError
 from .server import ServerControl, ServerError
@@ -148,10 +148,14 @@ class Watchdog:
 
     # ---------------------------------------------------------------- act
 
-    def _notify(self, title: str, body: str, *, urgency: str = "normal") -> None:
+    def _notify(self, title: str, body: str, *, urgency: str = "normal",
+                kind: str | None = None, data: dict | None = None) -> None:
         w = self.cfg.watchdog
         util.notify(title, body, desktop=w.notify_desktop, webhook_url=w.webhook_url,
+                    ntfy_url=w.ntfy_url, ntfy_topic=w.ntfy_topic, ntfy_token=w.ntfy_token,
                     urgency=urgency)
+        if kind:
+            events.emit(kind, body, urgency=urgency, data=data)
 
     def act(self, obs: Observation, actions: list[Action]) -> None:
         st = state.load()
@@ -173,10 +177,12 @@ class Watchdog:
                     with util.OpsLock():
                         self.ctl.start(wait=True)
                     self._notify("mcctl: server restarted",
-                                 f"Self-heal after: {reason}. Restart #{n_recent + 1} this window.")
+                                 f"Self-heal after: {reason}. Restart #{n_recent + 1} this window.",
+                                 kind="restart", data={"reason": reason, "n": n_recent + 1})
                 except (ServerError, TransportError, util.LockHeldError) as e:
                     log.error("self-heal start failed: %s", e)
-                    self._notify("mcctl: restart FAILED", str(e), urgency="critical")
+                    self._notify("mcctl: restart FAILED", str(e), urgency="critical",
+                                 kind="restart-failed", data={"error": str(e)})
 
             elif action is Action.RESTART_FROZEN:
                 logs.collect_evidence(self.t, self.cfg, "watchdog restart: frozen "
@@ -187,10 +193,12 @@ class Watchdog:
                     with util.OpsLock():
                         self.ctl.restart(reason="server frozen — automatic restart", now=True)
                     self._notify("mcctl: frozen server restarted",
-                                 f"Log stale {obs.log_age_s}s and console unresponsive.")
+                                 f"Log stale {obs.log_age_s}s and console unresponsive.",
+                                 kind="freeze-restart", data={"log_age_s": obs.log_age_s})
                 except (ServerError, TransportError, util.LockHeldError) as e:
                     log.error("freeze restart failed: %s", e)
-                    self._notify("mcctl: freeze restart FAILED", str(e), urgency="critical")
+                    self._notify("mcctl: freeze restart FAILED", str(e), urgency="critical",
+                                 kind="restart-failed", data={"error": str(e)})
 
             elif action is Action.HALT_CRASHLOOP:
                 st = state.load()
@@ -200,7 +208,8 @@ class Watchdog:
                     msg = (f"{w.max_restarts} restarts within {w.restart_window}s — watchdog "
                            "halted. Investigate (mcctl logs crash), then `mcctl start`.")
                     log.error(msg)
-                    self._notify("mcctl: CRASH LOOP — watchdog halted", msg, urgency="critical")
+                    self._notify("mcctl: CRASH LOOP — watchdog halted", msg, urgency="critical",
+                                 kind="crash-loop-halt")
 
             elif action is Action.ALERT_TPS:
                 self._lag_strikes += 1
@@ -210,20 +219,23 @@ class Watchdog:
                         with contextlib.suppress(Exception):
                             url = Spark(self.console).profile(60)
                             body += f" Profiler: {url}"
-                    self._notify("mcctl: server lagging", body)
+                    self._notify("mcctl: server lagging", body,
+                                 kind="alert-tps", data={"tps": obs.tps})
             elif action is Action.ALERT_HEAP:
                 if state.should_alert(st, "heap", 3600, obs.ts):
                     self._notify("mcctl: heap pressure",
-                                 f"Heap at {obs.heap_pct:.0f}% of Xmx. Try `mcctl purge`.")
+                                 f"Heap at {obs.heap_pct:.0f}% of Xmx. Try `mcctl purge`.",
+                                 kind="alert-heap", data={"heap_pct": round(obs.heap_pct, 1)})
             elif action is Action.ALERT_DISK:
                 if state.should_alert(st, "disk", 3600, obs.ts):
                     self._notify("mcctl: low disk on server",
-                                 f"Free: {util.human_bytes(obs.disk_free)}.", urgency="critical")
+                                 f"Free: {util.human_bytes(obs.disk_free)}.", urgency="critical",
+                                 kind="alert-disk", data={"disk_free": obs.disk_free})
             elif action is Action.ALERT_SSH:
                 if state.should_alert(st, "ssh", 900, obs.ts):
                     self._notify("mcctl: server unreachable",
                                  "SSH probe failing — OCI box down or network out.",
-                                 urgency="critical")
+                                 urgency="critical", kind="alert-ssh")
             elif action is Action.AUTOSAVE:
                 with contextlib.suppress(ConsoleError, TransportError):
                     self.console.send("save-all", timeout=15)

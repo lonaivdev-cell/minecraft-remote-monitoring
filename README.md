@@ -47,6 +47,10 @@ mcctl init  →  mcctl doctor  →  mcctl start  →  mcctl dash
 | `mcctl ai [logs\|crash\|mods\|inspect\|ask\|chat]` | AI analysis & multi-turn chat, powered by **Claude or a local LLM via ollama** (`[llm].provider`): review logs, root-cause crash reports, explain what the mods do, teacher-mode walkthroughs, free-form questions, and an interactive `chat` session — all with live server context attached |
 | `mcctl stats` | local JSONL metrics history (TPS, MSPT, heap, RAM, players) |
 | `mcctl sync --pull/--push` | rsync the `config/` dir — the Better Compatibility Checker mismatch fix |
+| `mcctl agent [--schema]` | **JSON-RPC 2.0 server over SSH stdio** — the programmable contract every client (the planned phone app, scripts, dashboards) renders over; `--schema` prints the versioned, golden-tested contract |
+| `mcctl events [-f] [--since N]` | the watchdog's audit log: every heal/restart/alert, tail or follow (also streamed live over the agent's `events.subscribe`) |
+| `mcctl metrics export [--cat]` | Prometheus textfile exporter from `metrics.jsonl` for node_exporter → Grafana (atomic write; ships with `mcctl-metrics.timer`) |
+| `mcctl notify-test` | fire a test alert through every configured sink (desktop, Discord webhook, ntfy push) |
 | `mcctl doctor [--fix]` | end-to-end preflight; encodes the hard-won knowledge (below) |
 
 ## Install
@@ -118,6 +122,7 @@ systemctl --user daemon-reload
 systemctl --user enable --now mcctl-watchdog.service   # self-healing
 systemctl --user enable --now mcctl-backup.timer       # daily 04:30 backup + rotation
 systemctl --user enable --now mcctl-autosave.timer     # save-all every 20 min
+systemctl --user enable --now mcctl-metrics.timer      # refresh the Prometheus textfile every minute
 mcctl watchdog arm                                     # actually allow healing
 loginctl enable-linger $USER                           # keep units running after logout
 ```
@@ -188,11 +193,53 @@ src/mcctl/
 ├── tracer.py     JVM GC tracer — jstat -gcutil parsing (pure) + one streaming round-trip
 ├── charts.py     terminal charting primitives (sparklines, block charts) — pure
 ├── watch.py      `mcctl watch` line-oriented live monitor + metric recorder
+├── agent.py      `mcctl agent` JSON-RPC 2.0 server over stdio — method registry reusing the core, generated+golden-tested schema, event stream
+├── events.py     append-only event journal (watchdog ⇄ agent ⇄ `mcctl events`)
+├── prometheus.py textfile exporter — pure render + atomic write from metrics.jsonl
 ├── dash.py       rich Live dashboard
 ├── gui.py        GUI launcher: dependency check, friendly pacman hint
 ├── gui_app.py    GTK4 + libadwaita desktop app (single worker thread for SSH)
 └── state.py      armed/desired/halted/restart-history persistence
 ```
+
+## Programmable: the agent
+
+`mcctl agent` is a long-lived **JSON-RPC 2.0** server speaking newline-delimited
+JSON over its stdin/stdout — meant to be run at the end of a single SSH channel.
+Every method reuses the same tested core the CLI calls; nothing is reimplemented.
+This is the contract the planned Android app (and any script or dashboard)
+renders over — *one brain, two faces*.
+
+```fish
+# locally, eyeball it (each line is one request/response):
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"agent.hello","params":{"capabilities":["actions"]}}' \
+              '{"jsonrpc":"2.0","id":2,"method":"status","params":{"fast":true}}' | mcctl agent
+
+# over SSH, exactly how a client drives it:
+ssh carborio mcctl agent      # then write JSON-RPC lines, read responses + `event` notifications
+
+mcctl agent --schema          # the versioned, machine-readable contract
+```
+
+- **No new surface:** no listening port, no stored credential — auth is the SSH
+  key the client already holds, the agent runs as the same unprivileged user.
+- **Versioned + drift-proof:** the schema is generated from the dataclasses and
+  frozen by a golden-file test; the contract can't change without bumping
+  `AGENT_PROTOCOL` on purpose.
+- **Destructive methods** (`kill`, `backup.restore`, `props.set`, …) require both
+  a capability granted in `agent.hello` and an explicit `"confirm": true`.
+- **Events:** `events.subscribe` streams watchdog heals/alerts as JSON-RPC
+  notifications, backed by the same `events.jsonl` journal `mcctl events` tails.
+
+## Off-box: push & metrics
+
+- **Phone push (ntfy / UnifiedPush):** set `[watchdog].ntfy_topic` (server
+  defaults to `https://ntfy.sh`) and watchdog alerts reach your phone. ntfy is a
+  UnifiedPush distributor, so the future app gets push for free — no FCM, no
+  relay. `mcctl notify-test` exercises every sink.
+- **Prometheus / Grafana:** `mcctl metrics export` writes a node_exporter
+  textfile from the recorded history; enable `mcctl-metrics.timer` to refresh it
+  every minute and point `--collector.textfile.directory` at it.
 
 ## Development & testing
 
@@ -212,9 +259,12 @@ CI runs lint + both suites on every push.
 
 ## #TODO — HIGH PRIORITY: Android companion app
 
-> **Next development cycle: build an Android app with feature parity (status,
+> **Next development cycle: build the Android app with feature parity (status,
 > start/stop, dashboards, backups, alerts) for managing CarborioLand from a
 > phone.** The full development plan — architecture decision, phased roadmap,
 > security model, testing strategy — lives in **[TODO.md](TODO.md)**.
-> The groundwork is already here: every query has `--json` output, and the
-> watchdog/webhook layer gives push-style alerting today.
+> **Phase 0 (the server-side API) shipped in 0.5.0:** `mcctl agent` is the
+> JSON-RPC contract the app renders over, the `events.jsonl` journal +
+> `events.subscribe` give it a push-style stream, and the ntfy bridge already
+> delivers watchdog alerts to a phone. The app is now a thin client over a
+> tested brain — see [DESIGN-0.5.0.md](DESIGN-0.5.0.md).

@@ -1,0 +1,427 @@
+{
+  "capabilities": [
+    "actions",
+    "destructive"
+  ],
+  "error_codes": {
+    "app": -32000,
+    "capability_required": -32004,
+    "confirm_required": -32005,
+    "internal": -32603,
+    "invalid_params": -32602,
+    "invalid_request": -32600,
+    "method_not_found": -32601,
+    "parse": -32700
+  },
+  "framing": "ndjson",
+  "methods": {
+    "agent.hello": {
+      "capability": null,
+      "destructive": false,
+      "params": {
+        "capabilities": "list[str]"
+      },
+      "summary": "Handshake: negotiate capabilities, learn protocol + server version."
+    },
+    "agent.ping": {
+      "capability": null,
+      "destructive": false,
+      "params": {},
+      "summary": "Liveness check."
+    },
+    "agent.schema": {
+      "capability": null,
+      "destructive": false,
+      "params": {},
+      "summary": "The versioned, machine-readable contract."
+    },
+    "agent.shutdown": {
+      "capability": null,
+      "destructive": false,
+      "params": {},
+      "summary": "Close the session cleanly."
+    },
+    "backup.create": {
+      "capability": "actions",
+      "destructive": false,
+      "params": {
+        "full": "bool"
+      },
+      "summary": "Consistent snapshot + GFS rotation."
+    },
+    "backup.list": {
+      "capability": null,
+      "destructive": false,
+      "params": {},
+      "summary": "List archives (newest first)."
+    },
+    "backup.prune": {
+      "capability": "actions",
+      "destructive": false,
+      "params": {},
+      "summary": "Apply the rotation policy now."
+    },
+    "backup.restore": {
+      "capability": "destructive",
+      "destructive": true,
+      "params": {
+        "name": "str"
+      },
+      "summary": "Replace the live world with a snapshot (refuses a running server)."
+    },
+    "backup.verify": {
+      "capability": null,
+      "destructive": false,
+      "params": {
+        "name": "str"
+      },
+      "summary": "Integrity-test one archive."
+    },
+    "cmd": {
+      "capability": "actions",
+      "destructive": false,
+      "params": {
+        "command": "str"
+      },
+      "summary": "Run an arbitrary console command (rcon preferred, tmux fallback)."
+    },
+    "events.list": {
+      "capability": null,
+      "destructive": false,
+      "params": {
+        "limit": "int",
+        "since": "float"
+      },
+      "summary": "Historical events from the journal (no streaming)."
+    },
+    "events.subscribe": {
+      "capability": null,
+      "destructive": false,
+      "params": {
+        "since": "float"
+      },
+      "summary": "Stream watchdog actions/alerts as `event` notifications."
+    },
+    "events.unsubscribe": {
+      "capability": null,
+      "destructive": false,
+      "params": {},
+      "summary": "Stop the event stream."
+    },
+    "health": {
+      "capability": null,
+      "destructive": false,
+      "params": {},
+      "summary": "spark memory/disk health."
+    },
+    "inspect": {
+      "capability": null,
+      "destructive": false,
+      "params": {
+        "section": "str"
+      },
+      "summary": "Deep OS/JVM introspection of one section."
+    },
+    "jvm.heap": {
+      "capability": "destructive",
+      "destructive": true,
+      "params": {
+        "size": "str"
+      },
+      "summary": "Rewrite Xms=Xmx (preserves Aikar's flags)."
+    },
+    "jvm.show": {
+      "capability": null,
+      "destructive": false,
+      "params": {},
+      "summary": "JAVA path + Xms/Xmx + key launch variables."
+    },
+    "kill": {
+      "capability": "actions",
+      "destructive": true,
+      "params": {},
+      "summary": "Emergency stop (no countdown, no save)."
+    },
+    "logs.crashes": {
+      "capability": null,
+      "destructive": false,
+      "params": {
+        "limit": "int"
+      },
+      "summary": "List recent crash reports."
+    },
+    "logs.tail": {
+      "capability": null,
+      "destructive": false,
+      "params": {
+        "crash": "bool",
+        "lines": "int",
+        "name": "str"
+      },
+      "summary": "Tail latest.log, or fetch a crash report."
+    },
+    "metrics.history": {
+      "capability": null,
+      "destructive": false,
+      "params": {
+        "n": "int"
+      },
+      "summary": "Recent recorded metric samples (TPS/MSPT/heap/RAM/players)."
+    },
+    "mods.list": {
+      "capability": null,
+      "destructive": false,
+      "params": {},
+      "summary": "Installed mods (id/version/size from the jars)."
+    },
+    "players.ban": {
+      "capability": "actions",
+      "destructive": true,
+      "params": {
+        "name": "str",
+        "reason": "str"
+      },
+      "summary": "Ban a player."
+    },
+    "players.kick": {
+      "capability": "actions",
+      "destructive": false,
+      "params": {
+        "name": "str",
+        "reason": "str"
+      },
+      "summary": "Kick a player."
+    },
+    "players.list": {
+      "capability": null,
+      "destructive": false,
+      "params": {},
+      "summary": "Players currently online."
+    },
+    "players.op": {
+      "capability": "actions",
+      "destructive": false,
+      "params": {
+        "deop": "bool",
+        "name": "str"
+      },
+      "summary": "Grant or revoke operator."
+    },
+    "players.whitelist": {
+      "capability": "actions",
+      "destructive": false,
+      "params": {
+        "action": "add|remove|on|off",
+        "name": "str"
+      },
+      "summary": "Whitelist add/remove or toggle enforcement."
+    },
+    "profile": {
+      "capability": "actions",
+      "destructive": false,
+      "params": {
+        "seconds": "int"
+      },
+      "summary": "Run the spark profiler, return the viewer URL."
+    },
+    "props.get": {
+      "capability": null,
+      "destructive": false,
+      "params": {
+        "key": "str"
+      },
+      "summary": "One server.properties value."
+    },
+    "props.list": {
+      "capability": null,
+      "destructive": false,
+      "params": {},
+      "summary": "server.properties (rcon.password masked)."
+    },
+    "props.set": {
+      "capability": "destructive",
+      "destructive": true,
+      "params": {
+        "key": "str",
+        "value": "str"
+      },
+      "summary": "Set a validated server.properties key (atomic, .bak kept)."
+    },
+    "purge": {
+      "capability": "actions",
+      "destructive": false,
+      "params": {},
+      "summary": "jcmd GC.run with a garbage-vs-leak verdict."
+    },
+    "restart": {
+      "capability": "actions",
+      "destructive": false,
+      "params": {
+        "now": "bool",
+        "reason": "str"
+      },
+      "summary": "Stop then start."
+    },
+    "save": {
+      "capability": "actions",
+      "destructive": false,
+      "params": {
+        "skip_if_down": "bool"
+      },
+      "summary": "save-all flush and confirm."
+    },
+    "start": {
+      "capability": "actions",
+      "destructive": false,
+      "params": {},
+      "summary": "Start the server in tmux and wait for ready."
+    },
+    "status": {
+      "capability": null,
+      "destructive": false,
+      "params": {
+        "fast": "bool"
+      },
+      "summary": "Full server status (process/tmux/port/players/TPS/heap/host/backup)."
+    },
+    "stop": {
+      "capability": "actions",
+      "destructive": false,
+      "params": {
+        "now": "bool",
+        "reason": "str"
+      },
+      "summary": "Graceful stop (player countdown \u2192 flush \u2192 stop \u2192 escalate)."
+    },
+    "tps": {
+      "capability": null,
+      "destructive": false,
+      "params": {},
+      "summary": "spark TPS/MSPT/CPU."
+    },
+    "watchdog.arm": {
+      "capability": "actions",
+      "destructive": false,
+      "params": {},
+      "summary": "Allow the watchdog to self-heal."
+    },
+    "watchdog.disarm": {
+      "capability": "actions",
+      "destructive": false,
+      "params": {},
+      "summary": "Stop the watchdog from acting."
+    },
+    "watchdog.state": {
+      "capability": null,
+      "destructive": false,
+      "params": {},
+      "summary": "armed/desired/halted + restart history."
+    }
+  },
+  "protocol": 1,
+  "transport": "jsonrpc-2.0/ssh-stdio",
+  "types": {
+    "BackupEntry": {
+      "age_s": "float",
+      "full": "bool",
+      "name": "str",
+      "path": "str",
+      "size": "int",
+      "ts": "str (ISO 8601)"
+    },
+    "Event": {
+      "data": "dict",
+      "detail": "str",
+      "kind": "started | stopped | restart | freeze-restart | crash-loop-halt | alert-tps | alert-heap | alert-disk | alert-ssh | restart-failed",
+      "ts": "float",
+      "urgency": "normal | critical"
+    },
+    "Status": {
+      "armed": "bool",
+      "channel": "str | None",
+      "desired": "str",
+      "disk_free": "int | None",
+      "errors": "list[str]",
+      "halted": "bool",
+      "heap_committed": "int | None",
+      "heap_max": "int | None",
+      "heap_used": "int | None",
+      "host_mem_avail": "int | None",
+      "host_mem_total": "int | None",
+      "host_mem_used": "int | None",
+      "last_backup": "str | None",
+      "last_backup_age_s": "int | None",
+      "load": "tuple[float, float, float] | None",
+      "log_age_s": "int | None",
+      "pane_dead": "bool",
+      "pid": "int | None",
+      "players": "PlayerList | None",
+      "port_open": "bool",
+      "running": "bool",
+      "tmux": "bool",
+      "tps": "dict | None",
+      "uptime_s": "int | None"
+    },
+    "config.backup": {
+      "compression": "str",
+      "full_excludes": "list[str]",
+      "keep_daily": "int",
+      "keep_recent": "int",
+      "keep_weekly": "int",
+      "local_dir": "str",
+      "min_free_gb": "float",
+      "prefix": "str",
+      "remote_dir": "str"
+    },
+    "config.llm": {
+      "api_key_env": "str",
+      "log_lines": "int",
+      "max_tokens": "int",
+      "model": "str",
+      "ollama_model": "str",
+      "ollama_url": "str",
+      "provider": "str"
+    },
+    "config.metrics": {
+      "prom_path": "str"
+    },
+    "config.server": {
+      "host": "str",
+      "java_home": "str",
+      "log_file": "str",
+      "mc_port": "int",
+      "rcon_port": "int",
+      "server_dir": "str",
+      "ssh_options": "list[str]",
+      "ssh_port": "int",
+      "start_command": "str",
+      "start_timeout": "int",
+      "stop_countdown": "list[int]",
+      "stop_timeout": "int",
+      "tmux_session": "str",
+      "transport": "str",
+      "user": "str",
+      "world_dir": "str"
+    },
+    "config.ui": {
+      "server_timezone": "str",
+      "timezone": "str"
+    },
+    "config.watchdog": {
+      "auto_profile_on_lag": "bool",
+      "autosave_minutes": "int",
+      "backoff_base": "int",
+      "freeze_log_age": "int",
+      "heap_alert_pct": "int",
+      "interval": "int",
+      "max_restarts": "int",
+      "notify_desktop": "bool",
+      "ntfy_token": "str",
+      "ntfy_topic": "str",
+      "ntfy_url": "str",
+      "restart_window": "int",
+      "tps_alert": "float",
+      "webhook_url": "str"
+    }
+  }
+}

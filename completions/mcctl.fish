@@ -1,6 +1,6 @@
 # fish completions for mcctl — Minecraft remote control & monitoring
 
-set -l cmds init doctor status start stop restart kill console cmd save tps health profile purge stats logs backup props jvm player watchdog sync rcon inspect mods ai dash gui
+set -l cmds init doctor status start stop restart kill console cmd save tps health profile purge stats logs backup props jvm player watchdog sync rcon inspect mods ai watch history trace dash gui agent events metrics notify-test
 
 complete -c mcctl -f
 
@@ -38,6 +38,13 @@ complete -c mcctl -n "not __fish_seen_subcommand_from $cmds" -a mods -d 'list se
 complete -c mcctl -n "not __fish_seen_subcommand_from $cmds" -a ai -d 'LLM analysis of logs/crashes/mods'
 complete -c mcctl -n "not __fish_seen_subcommand_from $cmds" -a dash -d 'live TUI dashboard'
 complete -c mcctl -n "not __fish_seen_subcommand_from $cmds" -a gui -d 'GTK desktop app'
+complete -c mcctl -n "not __fish_seen_subcommand_from $cmds" -a watch -d 'live one-line status stream'
+complete -c mcctl -n "not __fish_seen_subcommand_from $cmds" -a history -d 'metric history charts'
+complete -c mcctl -n "not __fish_seen_subcommand_from $cmds" -a trace -d 'live JVM GC tracer'
+complete -c mcctl -n "not __fish_seen_subcommand_from $cmds" -a agent -d 'JSON-RPC server over stdio (phone app/scripts)'
+complete -c mcctl -n "not __fish_seen_subcommand_from $cmds" -a events -d 'watchdog/heal/alert event journal'
+complete -c mcctl -n "not __fish_seen_subcommand_from $cmds" -a metrics -d 'Prometheus textfile exporter'
+complete -c mcctl -n "not __fish_seen_subcommand_from $cmds" -a notify-test -d 'fire a test alert to every sink'
 
 # per-subcommand
 complete -c mcctl -n "__fish_seen_subcommand_from init" -l force -d 'overwrite existing config'
@@ -76,4 +83,12 @@ complete -c mcctl -n "__fish_seen_subcommand_from console" -s c -l command -r -d
 complete -c mcctl -n "__fish_seen_subcommand_from inspect; and not __fish_seen_subcommand_from tree proc threads memory fds net env jvm host" -a 'tree proc threads memory fds net env jvm host'
 complete -c mcctl -n "__fish_seen_subcommand_from inspect" -l learn -d 'plain-language walkthrough'
 complete -c mcctl -n "__fish_seen_subcommand_from inspect mods" -l json
-complete -c mcctl -n "__fish_seen_subcommand_from ai; and not __fish_seen_subcommand_from logs crash mods inspect ask" -a 'logs crash mods inspect ask'
+complete -c mcctl -n "__fish_seen_subcommand_from ai; and not __fish_seen_subcommand_from logs crash mods inspect ask chat" -a 'logs crash mods inspect ask chat'
+complete -c mcctl -n "__fish_seen_subcommand_from agent" -l schema -d 'print the versioned contract and exit'
+complete -c mcctl -n "__fish_seen_subcommand_from events" -s f -l follow -d 'stream new events'
+complete -c mcctl -n "__fish_seen_subcommand_from events" -s n -r -d 'how many recent events'
+complete -c mcctl -n "__fish_seen_subcommand_from events" -l since -r -d 'only events from the last N seconds'
+complete -c mcctl -n "__fish_seen_subcommand_from events" -l json
+complete -c mcctl -n "__fish_seen_subcommand_from metrics; and not __fish_seen_subcommand_from export" -a export -d 'write the .prom textfile'
+complete -c mcctl -n "__fish_seen_subcommand_from metrics; and __fish_seen_subcommand_from export" -l out -r -d 'output path'
+complete -c mcctl -n "__fish_seen_subcommand_from metrics; and __fish_seen_subcommand_from export" -l cat -d 'also print the rendered file'
