@@ -78,10 +78,14 @@ def tail(t: BaseTransport, cfg: Config, lines: int = 50) -> str:
     return _localized(cfg, util.sanitize_terminal(r.out))
 
 
-def follow(t: BaseTransport, cfg: Config, lines: int = 20) -> Iterator[str]:
-    """Yield sanitized lines from `tail -f` until the caller stops iterating."""
+def follow(t: BaseTransport, cfg: Config, lines: int = 20, *, stop=None) -> Iterator[str]:
+    """Yield sanitized lines from `tail -F` until the caller stops iterating.
+
+    `stop` (a threading.Event) lets a caller cancel the underlying `tail` from
+    another thread — needed by the GUI's live log view, which follows on a
+    background thread and must stop cleanly when you leave the page or quit."""
     script = f"exec tail -n {int(lines)} -F {q(_log_path(cfg))} 2>/dev/null"
-    for line in t.stream(script):
+    for line in t.stream(script, stop=stop):
         yield _localized(cfg, util.sanitize_terminal(line))
 
 

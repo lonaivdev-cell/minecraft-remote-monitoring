@@ -63,3 +63,51 @@ def test_make_transport_local_vs_ssh():
     assert isinstance(make_transport(cfg), LocalTransport)
     cfg.server.transport = "ssh"
     assert isinstance(make_transport(cfg), SshTransport)
+
+
+# ---------------------------------------------------------------- cancellable stream
+# The live log view follows `tail -F` on a background thread; it must be able to
+# stop a never-ending stream cleanly (in-band, and while blocked on a read).
+
+def test_stream_stops_in_band_when_event_set():
+    import threading
+
+    from mcctl.transport import LocalTransport
+    stop = threading.Event()
+    seen: list[str] = []
+
+    def consume():
+        for line in LocalTransport().stream(
+                "i=0; while true; do echo line$i; i=$((i+1)); sleep 0.05; done", stop=stop):
+            seen.append(line)
+            if len(seen) >= 3:
+                stop.set()
+
+    th = threading.Thread(target=consume)
+    th.start()
+    th.join(timeout=10)
+    assert not th.is_alive(), "stream() did not end after stop was set"
+    assert seen[:3] == ["line0", "line1", "line2"]
+
+
+def test_stream_watcher_terminates_blocked_read():
+    import threading
+    import time
+
+    from mcctl.transport import LocalTransport
+    stop = threading.Event()
+    out: list[str] = []
+
+    def consume():
+        for line in LocalTransport().stream("echo hello; sleep 100", stop=stop):
+            out.append(line)
+
+    th = threading.Thread(target=consume)
+    started = time.monotonic()
+    th.start()
+    time.sleep(0.3)          # let it print, then block deep inside `sleep 100`
+    stop.set()               # the watcher must kill the child to unblock the read
+    th.join(timeout=10)
+    assert not th.is_alive()
+    assert out == ["hello"]
+    assert time.monotonic() - started < 5     # didn't wait out the 100s sleep
