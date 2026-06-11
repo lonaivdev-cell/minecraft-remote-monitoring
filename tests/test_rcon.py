@@ -98,3 +98,29 @@ def test_auth_failure():
 def test_connect_refused():
     with pytest.raises(RconError, match="cannot connect"):
         RconClient("127.0.0.1", 1, "x", timeout=0.5).connect()
+
+
+class ResettingRconServer(threading.Thread):
+    """Accepts the TCP connection, then forces a RST — mimics an SSH -L tunnel to a
+    port whose server isn't really speaking RCON (the 'Connection reset by peer' case)."""
+
+    def __init__(self):
+        super().__init__(daemon=True)
+        self.sock = socket.socket()
+        self.sock.bind(("127.0.0.1", 0))
+        self.sock.listen(1)
+        self.port = self.sock.getsockname()[1]
+
+    def run(self):
+        conn, _ = self.sock.accept()
+        conn.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+        conn.close()  # SO_LINGER 0 => RST, so the client's recv raises ConnectionResetError
+
+
+def test_connect_reset_is_wrapped_as_rconerror():
+    """A raw ConnectionResetError during the handshake must become RconError, so the
+    Console can fall back to tmux instead of the exception crashing the status probe."""
+    srv = ResettingRconServer()
+    srv.start()
+    with pytest.raises(RconError):
+        RconClient("127.0.0.1", srv.port, "x", timeout=2).connect()

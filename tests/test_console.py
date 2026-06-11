@@ -67,3 +67,38 @@ def test_players_unparseable(fake_t, monkeypatch):
     c = Console(_cfg(), fake_t)
     monkeypatch.setattr(c, "send", lambda cmd, timeout=10: "cmd: list")
     assert c.players() is None
+
+
+def test_send_falls_back_to_tmux_when_rcon_connection_resets(fake_t, monkeypatch):
+    """server.properties advertises RCON, but the live server resets the connection
+    (RCON not actually serving). send() must fall back to tmux, not raise — this is
+    the bug where a running server showed up as 'unreachable'."""
+    import mcctl.console as C
+    cfg = _cfg()
+    fake_t.files[f"{cfg.server.server_dir}/server.properties"] = (
+        "enable-rcon=true\nrcon.port=25575\nrcon.password=x\n"
+    )
+
+    def boom(self):
+        raise ConnectionResetError(104, "Connection reset by peer")
+
+    monkeypatch.setattr(C.RconClient, "connect", boom)
+    c = Console(cfg, fake_t)
+    c.send("list", timeout=0.3)                # must NOT raise (short timeout: empty fake log)
+    assert c.channel == "tmux"                 # fell back to the tmux channel
+    assert fake_t.calls_matching("send-keys")  # the command went out over tmux
+    assert c._rcon_down_until > 0              # cool-off armed so we don't churn the tunnel
+
+
+def test_rcon_cooloff_skips_reprobing(fake_t, monkeypatch):
+    cfg = _cfg()
+    fake_t.files[f"{cfg.server.server_dir}/server.properties"] = (
+        "enable-rcon=true\nrcon.port=25575\nrcon.password=x\n"
+    )
+    c = Console(cfg, fake_t)
+    c._rcon_down_until = float("inf")          # pretend RCON just failed
+    settings_calls = []
+    monkeypatch.setattr(c, "rcon_settings",
+                        lambda: settings_calls.append(1) or (True, 25575, "x"))
+    assert c._ensure_rcon() is None            # short-circuits…
+    assert settings_calls == []                # …without even re-reading rcon settings

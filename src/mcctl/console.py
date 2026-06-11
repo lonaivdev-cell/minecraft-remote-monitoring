@@ -43,6 +43,7 @@ class Console:
         self._rcon: RconClient | None = None
         self._tunnel_cm = None
         self._channel: str | None = None
+        self._rcon_down_until = 0.0  # monotonic deadline: skip RCON, use tmux, until then
 
     # ---------------------------------------------------------------- helpers
 
@@ -67,9 +68,13 @@ class Console:
                 password = line.split("=", 1)[1].strip()
         return enabled and bool(password), port, password
 
+    _RCON_COOLOFF = 60.0  # after a failure, don't re-open the tunnel for this long
+
     def _ensure_rcon(self) -> RconClient | None:
         if self._rcon:
             return self._rcon
+        if time.monotonic() < self._rcon_down_until:
+            return None  # recently failed — use tmux, re-probe RCON later
         enabled, port, password = self.rcon_settings()
         if not enabled:
             return None
@@ -78,11 +83,16 @@ class Console:
             lport = self._tunnel_cm.__enter__()
             self._rcon = RconClient("127.0.0.1", lport, password).connect()
             self._channel = "rcon"
+            self._rcon_down_until = 0.0
             log.debug("RCON channel up via tunnel :%d", lport)
             return self._rcon
-        except (RconError, TransportError) as e:
+        except (RconError, TransportError, OSError) as e:
+            # OSError covers any raw socket error the client didn't wrap; the server
+            # may advertise RCON in server.properties but not actually serve it yet
+            # (e.g. enabled/password changed since boot — active only after restart).
             log.debug("RCON unavailable (%s); falling back to tmux", e)
             self._teardown_rcon()
+            self._rcon_down_until = time.monotonic() + self._RCON_COOLOFF
             return None
 
     def _teardown_rcon(self) -> None:
@@ -152,9 +162,10 @@ class Console:
         if rcon:
             try:
                 return util.strip_mc_codes(rcon.command(cmd, max_wait=timeout))
-            except RconError as e:
+            except (RconError, OSError) as e:
                 log.warning("RCON send failed (%s); retrying over tmux", e)
                 self._teardown_rcon()
+                self._rcon_down_until = time.monotonic() + self._RCON_COOLOFF
         self._channel = "tmux"
         return util.strip_mc_codes(self._tmux_query(cmd, timeout=timeout))
 
@@ -176,8 +187,9 @@ class Console:
                 m = rx.search(reply)
                 if m:
                     return m.group(0)
-            except RconError:
+            except (RconError, OSError):
                 self._teardown_rcon()
+                self._rcon_down_until = time.monotonic() + self._RCON_COOLOFF
         if not sent:
             self._channel = "tmux"
             self.tmux_send(cmd)

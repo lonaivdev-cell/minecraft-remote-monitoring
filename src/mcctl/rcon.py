@@ -55,7 +55,15 @@ class RconClient:
         assert self._sock
         buf = b""
         while len(buf) < n:
-            chunk = self._sock.recv(n - len(buf))
+            try:
+                chunk = self._sock.recv(n - len(buf))
+            except TimeoutError:
+                raise  # command() uses idle timeouts to detect a complete reply
+            except OSError as e:
+                # reset/refused/broken pipe — common through the SSH -L tunnel when
+                # the server isn't actually serving RCON; surface as RconError so the
+                # Console falls back to tmux instead of crashing the caller.
+                raise RconError(f"RCON connection lost: {e}") from e
             if not chunk:
                 raise RconError("connection closed by server")
             buf += chunk
@@ -75,7 +83,10 @@ class RconClient:
         except OSError as e:
             raise RconError(f"cannot connect to RCON at {self._addr[0]}:{self._addr[1]}: {e}") from e
         req = next(self._ids)
-        self._sock.sendall(pack_packet(req, AUTH, self._password))
+        try:
+            self._sock.sendall(pack_packet(req, AUTH, self._password))
+        except OSError as e:
+            raise RconError(f"RCON connection lost during auth: {e}") from e
         # Some servers send an empty RESPONSE_VALUE before the auth response.
         for _ in range(3):
             rid, ptype, _body = self._read_packet()
@@ -91,7 +102,10 @@ class RconClient:
         if len(cmd) > 1446:
             raise RconError("command too long for a single RCON packet")
         req = next(self._ids)
-        self._sock.sendall(pack_packet(req, EXEC, cmd))
+        try:
+            self._sock.sendall(pack_packet(req, EXEC, cmd))
+        except OSError as e:
+            raise RconError(f"RCON connection lost sending {cmd!r}: {e}") from e
         parts: list[str] = []
         import time
         start = time.monotonic()
