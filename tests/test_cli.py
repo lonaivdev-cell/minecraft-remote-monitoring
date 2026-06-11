@@ -133,3 +133,13 @@ def test_transport_error_exit_code(tmp_path, monkeypatch, capsys, fake_t):
     _wire_fake(monkeypatch, fake_t)
     fake_t.expect(lambda s: True, TransportError("host unreachable"))
     assert cli.main(["save", "--config", str(cfgfile)]) == 3
+
+
+def test_watchdog_install_writes_units_to_xdg(isolated_xdg, capsys):
+    from mcctl import util
+    from mcctl.cli import _install_units
+    assert _install_units() == 0
+    written = sorted(p.name for p in util.user_unit_dir().iterdir())
+    assert "mcctl-watchdog.service" in written and len(written) == 5
+    text = (util.user_unit_dir() / "mcctl-backup.service").read_text()
+    assert "backup create --notify" in text

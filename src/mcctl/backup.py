@@ -94,6 +94,17 @@ def plan_rotation(entries: list[BackupEntry], *, keep_recent: int, keep_daily: i
     return kept, dropped
 
 
+def full_backup_excludes(cfg: Config) -> list[str]:
+    """Tar excludes for --full archives. The backup dir itself is excluded only
+    when it actually lives inside server_dir (tar paths are relative to -C)."""
+    out = list(cfg.backup.full_excludes)
+    server = cfg.server.server_dir.rstrip("/")
+    remote = cfg.backup.remote_dir.rstrip("/")
+    if remote.startswith(server + "/"):
+        out.append(remote[len(server) + 1:])  # same non-anchored form as the others
+    return out
+
+
 class BackupManager:
     def __init__(self, cfg: Config, transport: BaseTransport, console: Console | None = None):
         self.cfg = cfg
@@ -187,9 +198,7 @@ class BackupManager:
         self._disk_guard()
 
         if full:
-            excludes = " ".join(
-                f"--exclude={q(e)}" for e in [*b.full_excludes, b.remote_dir.lstrip('/')]
-            )
+            excludes = " ".join(f"--exclude={q(e)}" for e in full_backup_excludes(self.cfg))
             src = f"-C {q(s.server_dir)} {excludes} ."
         else:
             src = f"-C {q(s.server_dir)} {q(s.world_dir)}"
