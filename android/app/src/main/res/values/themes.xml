@@ -1,0 +1,12 @@
+<resources>
+    <!--
+      Activity theme. Compose draws everything; this only sets the window chrome so the
+      app opens onto deepslate (no white flash) with a dark, edge-to-edge system bar look.
+    -->
+    <style name="Theme.Mcctl" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/deepslate</item>
+        <item name="android:statusBarColor">@color/deepslate</item>
+        <item name="android:navigationBarColor">@color/deepslate</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

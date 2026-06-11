@@ -68,21 +68,29 @@ and route intent ops through it; `ALERT_SSH` ("box down") must be detected from
       watchdog alerts reach a phone and the future app gets push for free.
 - [x] **Prometheus textfile exporter** (`mcctl metrics export` + `mcctl-metrics.timer`).
 
-### Phase 1 — Android MVP (read-mostly) — *requires Phase 0.5: the box is the brain the app renders*
-- [ ] Kotlin + Jetpack Compose; sshj with **Ed25519 device key** generated in
-      Android Keystore; key authorized on the OCI box like any other client.
-- [ ] Screens: server card (state/players/TPS/heap), log tail, backup list.
+### Phase 1 — Android MVP — **SHIPPED in [android/](android/)**
+- [x] Kotlin + Jetpack Compose; sshj with an **Ed25519 device key**, held in
+      `EncryptedSharedPreferences` (Android Keystore master key) — only the public
+      key leaves the device; authorize it on the box like any other client. Host-key
+      TOFU with fingerprint display; rotate the key in-app.
+- [x] Screens — far past the MVP card: live Overview (status + actions + watchdog
+      arm), TPS/MSPT/heap/RAM/players/load **history charts**, console, log tail,
+      players, backups, mods, properties, JVM, crashes+postmortem, inspect, profiler,
+      events. Lush Minecraft theme (grass/dirt/stone/redstone palette, pixel fonts).
 - [ ] Home-screen widget: TPS + player count via WorkManager periodic refresh.
 - [ ] Alerting v1: keep the existing webhook → Discord channel (zero new infra).
 
 ### Phase 2 — actions + alerts
-- [ ] Start/stop/restart/backup/save with the same confirmation semantics
-      (player-count warning before stop, typed confirm for restore).
+- [x] Start/stop/restart/backup/save with the same confirmation semantics
+      (player-count warning before stop, typed confirm for restore) — plus a
+      biometric gate for every state change and capability/confirm gating that
+      matches the agent's.
 - [ ] Foreground "session" service while a long action runs; resumable on
       network change (SSH channel re-establish + idempotent RPC ids).
-- [ ] Push alerts: tiny UnifiedPush/ntfy bridge — watchdog already has the
-      webhook hook; add `ntfy_url` config alongside `webhook_url`.
-      *(server-side bridge pulled forward to v0.5.0; here = app subscription side)*
+- [ ] Push alerts: app subscribes to the ntfy topic (server-side bridge already
+      shipped in v0.5.0). Live `events.subscribe` streaming is done; background
+      push is the remaining piece.
+- [ ] AI screen: wire `mcctl ai`-style analysis (currently a deliberate placeholder).
 
 ### Phase 3 — polish
 - [ ] spark profiler launcher with result URL → in-app browser.

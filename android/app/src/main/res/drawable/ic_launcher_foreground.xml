@@ -1,0 +1,32 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!--
+      A front-facing grass block, drawn from pixel rectangles inside the adaptive-icon
+      safe zone (~26..82). Dark outline, dirt body, grass cap with a bright top edge, and
+      a few drips + speckles so it reads as Minecraft turf, not a plain green box.
+    -->
+
+    <!-- outline / drop shadow -->
+    <path android:fillColor="#0C0C0E" android:pathData="M26,28h56v56h-56z" />
+
+    <!-- dirt body -->
+    <path android:fillColor="#79553A" android:pathData="M29,46h50v35h-50z" />
+    <!-- dirt dark speckles -->
+    <path android:fillColor="#5C4332" android:pathData="M35,52h7v7h-7z" />
+    <path android:fillColor="#5C4332" android:pathData="M52,64h8v8h-8z" />
+    <path android:fillColor="#5C4332" android:pathData="M66,50h6v6h-6z" />
+    <path android:fillColor="#5C4332" android:pathData="M34,70h6v6h-6z" />
+
+    <!-- grass cap -->
+    <path android:fillColor="#5DA130" android:pathData="M29,31h50v16h-50z" />
+    <!-- bright top highlight -->
+    <path android:fillColor="#7FB238" android:pathData="M29,31h50v5h-50z" />
+    <!-- grass drips into the dirt -->
+    <path android:fillColor="#5DA130" android:pathData="M33,47h6v5h-6z" />
+    <path android:fillColor="#5DA130" android:pathData="M49,47h7v7h-7z" />
+    <path android:fillColor="#5DA130" android:pathData="M64,47h6v4h-6z" />
+    <path android:fillColor="#4F8A28" android:pathData="M40,40h6v6h-6z" />
+</vector>

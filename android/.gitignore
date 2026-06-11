@@ -1,0 +1,15 @@
+# Gradle / Android build outputs
+.gradle/
+build/
+*/build/
+local.properties
+captures/
+.cxx/
+
+# IDE
+.idea/
+*.iml
+.kotlin/
+
+# Keep the Gradle wrapper jar (needed for CI + reproducible builds).
+!gradle/wrapper/gradle-wrapper.jar

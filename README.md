@@ -280,19 +280,36 @@ CI runs lint + both suites on every push.
 
 ---
 
-## #TODO — HIGH PRIORITY: Android companion app
+## Android companion app
 
-> **Next development cycle: build the Android app with feature parity (status,
-> start/stop, dashboards, backups, alerts) for managing CarborioLand from a
-> phone.** The full development plan — architecture decision, phased roadmap,
-> security model, testing strategy — lives in **[TODO.md](TODO.md)**.
+The phone client lives in **[android/](android/)** — Kotlin + Jetpack Compose, a
+lush Minecraft-themed UI, and a **thin client over `mcctl agent`**: it opens one
+SSH channel, runs the JSON-RPC server, and renders the contract. *One brain, two
+faces* — the tested Python core stays the single source of truth.
+
+It mirrors the desktop GUI: live Overview (status + start/stop/restart/save/backup/
+purge/kill + watchdog arm), TPS/MSPT/heap/RAM/players/load history charts, console,
+log tail, live watchdog event stream, players (whitelist/op/kick/ban), backups
+(create/prune/verify/restore with a typed confirm), mods, validated server.properties
+editor, JVM heap, crash reports + deterministic postmortem, OS/JVM inspect, and the
+spark profiler. The AI page is a deliberate placeholder (an on-device/cloud LLM is a
+later cycle). Security is unchanged: SSH only, a per-device Ed25519 key in the Android
+Keystore, host-key TOFU, and a biometric gate for actions — see
+[android/README.md](android/README.md).
+
+```
+cd android && ./gradlew :core:test        # protocol layer — no Android SDK needed
+cd android && ./gradlew :app:assembleDebug # the APK (needs the Android SDK)
+```
+
+CI builds the APK on every push and uploads it as the `mcctl-debug-apk` artifact.
+
 > **Phase 0 (the server-side API) shipped in 0.5.0:** `mcctl agent` is the
 > JSON-RPC contract the app renders over, the `events.jsonl` journal +
 > `events.subscribe` give it a push-style stream, and the ntfy bridge already
-> delivers watchdog alerts to a phone. The app is now a thin client over a
-> tested brain — see [DESIGN-0.5.0.md](DESIGN-0.5.0.md).
+> delivers watchdog alerts to a phone — see [DESIGN-0.5.0.md](DESIGN-0.5.0.md).
 > **Where that brain lives is decided (2026-06-11):** on the OCI box, as
 > systemd user units with linger — so the phone, the desktop, and the watchdog
 > share one desired/events truth instead of split-braining.
-> [DESIGN-BRAIN.md](DESIGN-BRAIN.md) is the record; the migration (Phase 0.5,
-> v0.6.0) gates Phase 1.
+> [DESIGN-BRAIN.md](DESIGN-BRAIN.md) is the record. The full app roadmap and
+> security model live in **[TODO.md](TODO.md)**.
