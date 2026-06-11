@@ -13,8 +13,11 @@ and `transport = "local"` dev mode against a sandbox directory.
 from __future__ import annotations
 
 import contextlib
+import os
 import shlex
+import signal
 import subprocess
+import threading
 from base64 import b64encode
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -46,13 +49,61 @@ def q(s: str) -> str:
     return shlex.quote(s)
 
 
+def _kill_group(p: subprocess.Popen, sig: int) -> None:
+    """Signal the child *and its whole process group*.
+
+    A plain `terminate()` only hits the direct child (the shell). When a script
+    is `cmd1; cmd2` rather than `exec cmd`, the shell stays alive and its
+    grandchild (e.g. `sleep`/`tail`) keeps the stdout pipe open, so the reader
+    never sees EOF. Streams are spawned with start_new_session=True so the child
+    leads its own group; killing the group reaps the grandchildren too."""
+    with contextlib.suppress(ProcessLookupError, OSError):
+        os.killpg(os.getpgid(p.pid), sig)
+    with contextlib.suppress(ProcessLookupError, OSError):
+        p.send_signal(sig)
+
+
+def _pump(p: subprocess.Popen, stop: threading.Event | None) -> Iterator[str]:
+    """Yield decoded stdout lines from `p` until EOF (or `stop` is set), always
+    reaping the child group on the way out.
+
+    A follower like `tail -F` never reaches EOF on its own, so cancellation has
+    to come from outside: when `stop` is set we kill the child group, which
+    closes stdout and unblocks the read. A tiny watcher thread does the killing
+    because the read is blocking; it is released by `done` once we're finished,
+    so no watcher leaks behind a naturally-ended stream."""
+    assert p.stdout is not None
+    done = threading.Event()
+    if stop is not None:
+        def _watch() -> None:
+            while not done.wait(0.2):
+                if stop.is_set():
+                    _kill_group(p, signal.SIGTERM)
+                    return
+        threading.Thread(target=_watch, daemon=True, name="mcctl-stream-cancel").start()
+    try:
+        for line in p.stdout:
+            yield line.decode(errors="replace").rstrip("\n")
+            if stop is not None and stop.is_set():
+                break
+    finally:
+        done.set()
+        _kill_group(p, signal.SIGTERM)
+        try:
+            p.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            _kill_group(p, signal.SIGKILL)
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                p.wait(timeout=5)
+
+
 class BaseTransport:
     """Interface; concrete methods raise TransportError on connection-level failure."""
 
     def run(self, script: str, *, timeout: float = 30, check: bool = False) -> RunResult:
         raise NotImplementedError
 
-    def stream(self, script: str) -> Iterator[str]:
+    def stream(self, script: str, *, stop: threading.Event | None = None) -> Iterator[str]:
         raise NotImplementedError
 
     def read_text(self, path: str, *, check: bool = True) -> str:
@@ -178,20 +229,14 @@ class SshTransport(BaseTransport):
             )
         return r
 
-    def stream(self, script: str) -> Iterator[str]:
+    def stream(self, script: str, *, stop: threading.Event | None = None) -> Iterator[str]:
         argv = ["ssh", *self._opts(), self.target, "--", "bash", "-s"]
         p = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                             stderr=subprocess.STDOUT)
-        assert p.stdin and p.stdout
+                             stderr=subprocess.STDOUT, start_new_session=True)
+        assert p.stdin
         p.stdin.write(script.encode())
         p.stdin.close()
-        try:
-            for line in p.stdout:
-                yield line.decode(errors="replace").rstrip("\n")
-        finally:
-            with contextlib.suppress(ProcessLookupError):
-                p.terminate()
-            p.wait(timeout=5)
+        yield from _pump(p, stop)
 
     def rsync(self, src: str, dst: str, *, delete: bool = False, excludes: tuple[str, ...] = ()) -> int:
         argv = ["rsync", "-az", "--info=progress2", "-e", self._ssh_e()]
@@ -259,19 +304,14 @@ class LocalTransport(BaseTransport):
             raise TransportError(f"local command failed (rc={r.rc}): {r.err.strip()[-500:]}")
         return r
 
-    def stream(self, script: str) -> Iterator[str]:
+    def stream(self, script: str, *, stop: threading.Event | None = None) -> Iterator[str]:
         p = subprocess.Popen(["bash", "-s"], stdin=subprocess.PIPE,
-                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        assert p.stdin and p.stdout
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                             start_new_session=True)
+        assert p.stdin
         p.stdin.write(script.encode())
         p.stdin.close()
-        try:
-            for line in p.stdout:
-                yield line.decode(errors="replace").rstrip("\n")
-        finally:
-            with contextlib.suppress(ProcessLookupError):
-                p.terminate()
-            p.wait(timeout=5)
+        yield from _pump(p, stop)
 
     def rsync(self, src: str, dst: str, *, delete: bool = False, excludes: tuple[str, ...] = ()) -> int:
         import shutil

@@ -42,7 +42,24 @@ log = util.get_logger("gui")
 APP_ID = "io.github.lonaivdev_cell.mcctl"
 FAST_TICK = 5    # seconds: cheap status probe (+ log tail when visible)
 SLOW_TICK = 20   # seconds: full status (spark TPS, players, heap)
-LOG_LINES = 200
+LOG_LINES = 200          # initial backlog shown when the live log view opens
+LOG_MAX_LINES = 5000     # ring-buffer cap so a long live tail can't grow forever
+
+# History page cards: (key, label, fixed upper bound or None = auto, value format)
+HISTORY_SPECS = (
+    ("tps",     "TPS",      20.0,  "{:.1f}"),
+    ("mspt",    "MSPT",     None,  "{:.0f} ms"),
+    ("heap",    "Heap",     100.0, "{:.0f}%"),
+    ("players", "Players",  None,  "{:.0f}"),
+    ("mem",     "Host RAM", 100.0, "{:.0f}%"),
+    ("load",    "Load 1m",  None,  "{:.2f}"),
+)
+HISTORY_COLORS = {
+    "tps": (0.22, 0.74, 0.45), "mspt": (0.93, 0.61, 0.22),
+    "heap": (0.33, 0.60, 0.95), "players": (0.66, 0.46, 0.92),
+    "mem": (0.24, 0.72, 0.72), "load": (0.91, 0.45, 0.45),
+}
+HISTORY_MIN_CARD = 200   # px floor for a square chart card on narrow windows
 
 _CSS = """
 .status-pill { padding: 6px 20px; border-radius: 999px; font-weight: 800; letter-spacing: 1px; }
@@ -129,7 +146,13 @@ class Window(Adw.ApplicationWindow):
         self.status = Status()
         self._busy = ""
         self._refreshing = False
-        self._logs_refreshing = False
+        # live log follower: tmux-like `tail -F` on its own transport + thread
+        self._log_following = False
+        self._log_thread: threading.Thread | None = None
+        self._log_stop: threading.Event | None = None
+        self._log_queue: queue.Queue = queue.Queue()
+        self._log_drain_id = 0
+        self._log_epoch = 0
         self._players_refreshing = False
         self._backups_refreshing = False
         self._syncing_armed = False
@@ -156,17 +179,21 @@ class Window(Adw.ApplicationWindow):
         self._profiler_running = False
         self._chat_messages: list[dict] = []
         self._chat_running = False
-        self._history_values: list[float | None] = []
-        self._history_lo = 0.0
-        self._history_hi = 20.0
+        self._history_series: dict[str, list[float | None]] = {}
+        self._history_times: list[int | None] = []
+        self._history_meta: dict[str, dict] = {}
+        self._history_areas: dict[str, Gtk.DrawingArea] = {}
         self._history_refreshing = False
+        self._booting = False                         # show "BOOTING SERVER" while a start runs
         self._settings_fields: list[tuple] = []      # (section, key, kind, widget)
         self._settings_saving = False
         self._ollama_models: list[str] = []
+        self._ollama_up: bool | None = None           # live ollama detection (None = unprobed)
         self._adopted = False                         # one-shot "connect to running server"
 
         self._build_ui()
         self._update_llm_widgets()  # initial AI/Chat availability + provider labels
+        self.connect("close-request", self._on_close_request)
 
         act = Gio.SimpleAction.new("refresh", None)
         act.connect("activate", lambda *_: (self._refresh(full=True), self._refresh_aux()))
@@ -317,14 +344,16 @@ class Window(Adw.ApplicationWindow):
     def _build_logs(self) -> Gtk.Widget:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6,
                       margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
-        title = Gtk.Label(label=f"{self.remote.cfg.server.log_file} — last {LOG_LINES} lines, "
-                                f"refreshed every {FAST_TICK}s while visible",
-                          halign=Gtk.Align.START)
+        title = Gtk.Label(
+            label=f"{self.remote.cfg.server.log_file} — live (tail -F). New lines stream in; "
+                  "scroll up to read back, scroll to the bottom to resume following.",
+            halign=Gtk.Align.START, wrap=True)
         title.add_css_class("dim-label")
         title.add_css_class("caption")
         box.append(title)
         self.log_view = self._textview()
-        box.append(Gtk.ScrolledWindow(child=self.log_view, vexpand=True))
+        self.log_scroller = Gtk.ScrolledWindow(child=self.log_view, vexpand=True)
+        box.append(self.log_scroller)
         return box
 
     def _build_players(self) -> Gtk.Widget:
@@ -470,32 +499,51 @@ class Window(Adw.ApplicationWindow):
         return box
 
     def _build_history(self) -> Gtk.Widget:
+        self.history_keys = [k for k, *_ in HISTORY_SPECS]
+        self._history_fixed_hi = {k: hi for k, _lbl, hi, _fmt in HISTORY_SPECS if hi}
+
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8,
                       margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
-        row = Gtk.Box(spacing=8)
-        self.history_keys = ["tps", "mspt", "heap", "players", "mem", "load"]
-        self.history_drop = Gtk.DropDown.new_from_strings(
-            ["TPS", "MSPT (ms)", "Heap %", "Players", "Host RAM %", "Load (1m)"])
-        self.history_drop.connect("notify::selected", lambda *_: self._refresh_history())
-        row.append(self.history_drop)
+        bar = Gtk.Box(spacing=8)
         refresh = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Reload history")
         refresh.connect("clicked", lambda *_: self._refresh_history())
-        row.append(refresh)
-        box.append(row)
-        hint = Gtk.Label(label="Recorded by the watchdog, `mcctl watch`, this app, and `mcctl dash`.",
-                         halign=Gtk.Align.START)
-        hint.add_css_class("dim-label")
-        hint.add_css_class("caption")
-        box.append(hint)
-        self.history_area = Gtk.DrawingArea(vexpand=True, hexpand=True)
-        self.history_area.set_size_request(-1, 260)
-        self.history_area.set_draw_func(self._draw_history)
-        frame = Gtk.Frame(child=self.history_area)
-        box.append(frame)
-        self.history_summary = Gtk.Label(label="—", halign=Gtk.Align.START, selectable=True)
-        self.history_summary.add_css_class("dim-label")
-        box.append(self.history_summary)
+        bar.append(refresh)
+        self.history_status = Gtk.Label(
+            label="Recorded by the watchdog, `mcctl watch`, this app, and `mcctl dash`.",
+            halign=Gtk.Align.START, hexpand=True, xalign=0.0, ellipsize=3)  # 3 = END
+        self.history_status.add_css_class("dim-label")
+        self.history_status.add_css_class("caption")
+        bar.append(self.history_status)
+        box.append(bar)
+
+        # Two columns, always. Each card is a square whose size follows the window
+        # width; when the rows overflow, the ScrolledWindow shows a vertical bar.
+        grid = Gtk.Grid(column_spacing=12, row_spacing=12, column_homogeneous=True)
+        for i, (key, label, _hi, _fmt) in enumerate(HISTORY_SPECS):
+            grid.attach(self._history_card(key, label), i % 2, i // 2, 1, 1)
+        box.append(Gtk.ScrolledWindow(child=grid, vexpand=True,
+                                      hscrollbar_policy=Gtk.PolicyType.NEVER,
+                                      vscrollbar_policy=Gtk.PolicyType.AUTOMATIC))
         return box
+
+    def _history_card(self, key: str, label: str) -> Gtk.Widget:
+        area = Gtk.DrawingArea(hexpand=True, vexpand=False)
+        area.set_content_height(HISTORY_MIN_CARD)
+        area.set_draw_func(self._draw_metric, key)
+        area.connect("resize", self._on_history_resize)
+        self._history_areas[key] = area
+        frame = Gtk.Frame()
+        frame.add_css_class("card")
+        frame.set_child(area)
+        return frame
+
+    def _on_history_resize(self, area: Gtk.DrawingArea, width: int, _height: int) -> None:
+        # Keep each card square: height tracks width (with a floor so a narrow
+        # window stays legible). Column width is set by the grid, not the height,
+        # so driving height from width can't feed back into a resize loop.
+        target = max(HISTORY_MIN_CARD, width)
+        if area.get_content_height() != target:
+            area.set_content_height(target)
 
     def _build_doctor(self) -> Gtk.Widget:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18,
@@ -1065,10 +1113,12 @@ class Window(Adw.ApplicationWindow):
 
     def _refresh_aux(self) -> None:
         page = self.stack.get_visible_child_name()
+        if page != "logs":
+            self._stop_log_stream()      # never follow while the page is hidden
         if page == "history":
             self._refresh_history()
         elif page == "logs":
-            self._refresh_logs()
+            self._start_log_stream()
         elif page == "players":
             self._refresh_players()
         elif page == "backups":
@@ -1105,21 +1155,90 @@ class Window(Adw.ApplicationWindow):
             if self._settings_fields:
                 self._sync_settings()         # reflect any adopted session name
 
-    def _refresh_logs(self) -> None:
-        if self._logs_refreshing or self._busy:
+    def _start_log_stream(self) -> None:
+        """Follow latest.log like tmux/`tail -F`: a dedicated thread with its own
+        transport streams new lines into a queue; a GLib timer drains them into
+        the view. Lines are appended (and old ones scrolled off) — never a whole-
+        buffer rewrite, so the view stops 're-showing' the same 200 lines."""
+        if self._log_following:
             return
-        self._logs_refreshing = True
+        self._log_following = True
+        self._log_epoch += 1
+        epoch = self._log_epoch
+        stop = threading.Event()
+        self._log_stop = stop
+        with contextlib.suppress(queue.Empty):       # drop anything stale
+            while True:
+                self._log_queue.get_nowait()
+        self.log_view.get_buffer().set_text("")
+        cfg = self.remote.cfg
 
-        def done(text: str):
-            self._logs_refreshing = False
-            self.log_view.get_buffer().set_text(text)
+        def follow():
+            # A second transport that rides the shared SSH control master. We
+            # deliberately don't .close() it: closing would `ssh -O exit` the
+            # master socket the main worker shares. tail itself is reaped by the
+            # stream's `stop` event, so there's nothing else to clean up.
+            t = make_transport(cfg)
+            while not stop.is_set():
+                try:
+                    for line in logs.follow(t, cfg, LOG_LINES, stop=stop):
+                        if stop.is_set():
+                            break
+                        self._log_queue.put(line)
+                except Exception as e:  # noqa: BLE001 - shown in-view, then retried
+                    if stop.is_set():
+                        break
+                    self._log_queue.put(f"⚠ log stream error: {e}")
+                if stop.is_set():
+                    break
+                self._log_queue.put("— reconnecting to the log —")
+                stop.wait(3.0)                       # server restart / blip: back off, then retrace
+
+        self._log_thread = threading.Thread(target=follow, daemon=True, name="mcctl-log-follow")
+        self._log_thread.start()
+        self._log_drain_id = GLib.timeout_add(200, self._drain_log_queue, epoch)
+
+    def _drain_log_queue(self, epoch: int) -> bool:
+        if epoch != self._log_epoch or not self._log_following:
+            return False                             # a newer stream (or stop) owns the view now
+        lines = []
+        with contextlib.suppress(queue.Empty):
+            for _ in range(LOG_MAX_LINES):           # bound the work per tick
+                lines.append(self._log_queue.get_nowait())
+        if lines:
+            self._append_log_lines(lines)
+        return True
+
+    def _append_log_lines(self, lines: list[str]) -> None:
+        adj = self.log_scroller.get_vadjustment()
+        # follow only if the user is already at the bottom (tmux scrollback feel)
+        at_bottom = adj.get_value() + adj.get_page_size() >= adj.get_upper() - 4.0
+        buf = self.log_view.get_buffer()
+        buf.insert(buf.get_end_iter(), "\n".join(lines) + "\n")
+        extra = buf.get_line_count() - LOG_MAX_LINES
+        if extra > 0:                                # trim the oldest lines (ring buffer)
+            ok, cut = buf.get_iter_at_line(extra)
+            if ok:
+                buf.delete(buf.get_start_iter(), cut)
+        if at_bottom:
             self._scroll_to_end(self.log_view)
 
-        def err(e: Exception):
-            self._logs_refreshing = False
-            self.log_view.get_buffer().set_text(f"(log unavailable: {e})")
+    def _stop_log_stream(self) -> None:
+        if not self._log_following:
+            return
+        self._log_following = False
+        self._log_epoch += 1                         # invalidate the drain timer + follower guards
+        if self._log_stop:
+            self._log_stop.set()                     # tears down the remote tail and its thread
+        if self._log_drain_id:
+            GLib.source_remove(self._log_drain_id)
+            self._log_drain_id = 0
+        self._log_stop = None
+        self._log_thread = None
 
-        self.worker.submit(lambda: logs.tail(self.remote.t, self.remote.cfg, LOG_LINES), done, err)
+    def _on_close_request(self, *_) -> bool:
+        self._stop_log_stream()
+        return False                                 # let the window close normally
 
     def _refresh_players(self) -> None:
         if self._players_refreshing or self._busy:
@@ -1236,23 +1355,71 @@ class Window(Adw.ApplicationWindow):
     def _update_llm_widgets(self) -> None:
         """Reflect the current [llm] provider on the AI and Chat pages, so switching
         anthropic <-> ollama (or fixing a key) in Settings takes effect immediately
-        instead of after a restart."""
+        instead of after a restart. Also kicks off a live ollama probe so a running
+        local model is actually *detected* and surfaced (not only found on failure)."""
         if not (hasattr(self, "ai_run") and hasattr(self, "chat_send")):
             return
         ok, reason = llm.available(self.remote.cfg)
         label = llm.provider_label(self.remote.cfg)
-        self.ai_note.set_visible(not ok)
-        self.chat_note.set_visible(not ok)
-        if not ok:
-            self.ai_note.set_label(f"AI analysis is unavailable:\n{reason}")
-            self.chat_note.set_label(f"Chat is unavailable:\n{reason}")
-        self.ai_run.set_sensitive(ok and not self._ai_running)
-        for w in (self.chat_entry, self.chat_send):
-            w.set_sensitive(ok and not self._chat_running)
         self.ai_hint.set_label(f"Model: {label} · logs/crash text is secret-redacted and "
                                "sent as untrusted data only.")
         self.chat_hint.set_label(f"{label} · multi-turn; context is secret-redacted and "
                                  "sent as untrusted data only.")
+        self._reflect_llm(ok, reason)        # immediate state from the cheap check
+        self._probe_ollama_async()           # refine once we know whether ollama answers
+
+    def _reflect_llm(self, ok: bool, reason: str) -> None:
+        """Apply AI/Chat availability + notes, blending `available()` with the
+        latest live ollama detection (`self._ollama_up`)."""
+        cfg = self.remote.cfg
+        note = ""
+        if cfg.llm.provider == "ollama":
+            if self._ollama_up is False:     # selected but not answering (probe done)
+                note = (f"ollama is selected but not answering at {cfg.llm.ollama_url} — start it "
+                        f"with `ollama serve` (and `ollama pull {cfg.llm.ollama_model}`).")
+        elif not ok:                          # anthropic selected, SDK missing
+            if self._ollama_up and self._ollama_models:
+                shown = ", ".join(self._ollama_models[:3])
+                note = (f"Claude needs the `anthropic` package — but a local ollama IS running "
+                        f"({shown}). Set [llm].provider = \"ollama\" in Settings to use it now: "
+                        "no API key, nothing leaves your machine.")
+            else:
+                note = f"AI analysis is unavailable:\n{reason}"
+        self.ai_note.set_visible(bool(note))
+        self.chat_note.set_visible(bool(note))
+        if note:
+            self.ai_note.set_label(note)
+            self.chat_note.set_label(note)
+        self.ai_run.set_sensitive(ok and not self._ai_running)
+        for w in (self.chat_entry, self.chat_send):
+            w.set_sensitive(ok and not self._chat_running)
+
+    def _probe_ollama_async(self) -> None:
+        """Detect a running ollama off the main loop (its own thread, no SSH worker,
+        no shared transport) so the check never blocks the UI or queues behind SSH."""
+        cfg = self.remote.cfg
+
+        def run():
+            try:
+                up, names = llm.probe_ollama(cfg)
+            except Exception:  # noqa: BLE001 - detection is best-effort
+                up, names = False, []
+            GLib.idle_add(self._on_ollama_probe, up, names)
+
+        threading.Thread(target=run, daemon=True, name="mcctl-ollama-probe").start()
+
+    def _on_ollama_probe(self, up: bool, names: list[str]) -> bool:
+        self._ollama_up = up
+        if names:
+            self._ollama_models = names
+        cfg = self.remote.cfg
+        if up and cfg.llm.provider == "ollama":
+            plural = "" if len(names) == 1 else "s"
+            self.ai_hint.set_label(f"Model: {llm.provider_label(cfg)} · ollama detected "
+                                   f"({len(names)} model{plural}) · sent as untrusted data only.")
+        ok, reason = llm.available(cfg)
+        self._reflect_llm(ok, reason)
+        return False
 
     def _on_inspect_ai(self, *_):
         section = inspector.SECTIONS[self.inspect_drop.get_selected()]
@@ -1415,73 +1582,193 @@ class Window(Adw.ApplicationWindow):
         if self._history_refreshing:
             return
         self._history_refreshing = True
-        key = self.history_keys[self.history_drop.get_selected()]
-        labels = {"tps": "TPS", "mspt": "MSPT (ms)", "heap": "Heap %",
-                  "players": "Players", "mem": "Host RAM %", "load": "Load (1m)"}
-        fixed_hi = {"tps": 20.0, "heap": 100.0, "mem": 100.0}
 
         def job():
             samples = metrics.read_samples(720)
-            return [self._history_value(key, s) for s in samples]
+            series = {k: [self._history_value(k, s) for s in samples] for k in self.history_keys}
+            times = [s.get("ts") for s in samples]
+            return series, times
 
-        def done(values):
+        def done(res):
             self._history_refreshing = False
             from . import charts
-            summ = charts.summarize(values)
-            self._history_lo = 0.0
-            self._history_values = values
-            if summ.n == 0:
-                self._history_hi = 1.0
-                self.history_summary.set_label("no samples yet — run `mcctl watch` or the watchdog")
-            else:
-                self._history_hi = fixed_hi.get(key) or max(summ.max * 1.15, 1.0)
-                self.history_summary.set_label(
-                    f"{labels[key]}   last {summ.last:.1f}   min {summ.min:.1f}   "
-                    f"avg {summ.avg:.1f}   max {summ.max:.1f}   (n={summ.n})")
-            self.history_area.queue_draw()
+            series, times = res
+            self._history_series, self._history_times = series, times
+            self._history_meta = {}
+            total = 0
+            for key in self.history_keys:
+                summ = charts.summarize(series[key])
+                total = max(total, summ.n)
+                fixed = self._history_fixed_hi.get(key)
+                hi = fixed if fixed else (self._nice_ceil(summ.max) if summ.max else 1.0)
+                self._history_meta[key] = {
+                    "summary": summ, "lo": 0.0, "hi": hi, "step": self._nice_step(hi)}
+            for area in self._history_areas.values():
+                area.queue_draw()
+            self.history_status.set_label(
+                "no samples yet — run `mcctl watch` or the watchdog"
+                if total == 0 else
+                f"{total} samples · all metrics shown · reloads while this tab is open")
 
         def err(e: Exception):
             self._history_refreshing = False
-            self.history_summary.set_label(f"history unavailable: {e}"[:200])
+            self.history_status.set_label(f"history unavailable: {e}"[:200])
 
         self.worker.submit(job, done, err)
 
-    def _draw_history(self, _area, cr, width, height, *_) -> None:
-        values = self._history_values
-        lo, hi = self._history_lo, self._history_hi
-        pad = 10.0
-        span = max(hi - lo, 1e-9)
-        plot_w, plot_h = max(1.0, width - 2 * pad), max(1.0, height - 2 * pad)
-        cr.set_source_rgba(0.5, 0.5, 0.5, 0.08)
+    @staticmethod
+    def _nice_step(span: float, target: int = 4) -> float:
+        """A 'nice' axis step (1/2/2.5/5 × 10ⁿ) giving ~`target` gridlines over span."""
+        import math
+        raw = max(span, 1e-9) / max(target, 1)
+        mag = 10.0 ** math.floor(math.log10(raw))
+        for m in (1, 2, 2.5, 5, 10):
+            if m * mag >= raw:
+                return m * mag
+        return 10 * mag
+
+    @classmethod
+    def _nice_ceil(cls, x: float) -> float:
+        """Round an auto axis maximum up to a clean multiple of a nice step,
+        with a little headroom so the peak sample isn't glued to the top."""
+        import math
+        step = cls._nice_step(x)
+        return max(step, math.ceil(x * 1.05 / step) * step)
+
+    @staticmethod
+    def _fmt_axis(val: float, step: float) -> str:
+        return f"{val:.0f}" if abs(step - round(step)) < 1e-9 else f"{val:.1f}"
+
+    @staticmethod
+    def _fmt_clock(ts: int) -> str:
+        return time.strftime("%H:%M", time.localtime(ts))
+
+    @staticmethod
+    def _chart_text(cr, x: float, y: float, s: str, *, size: float,
+                    rgba: tuple, align: str = "left") -> None:
+        cr.set_font_size(size)
+        ext = cr.text_extents(s)
+        if align == "right":
+            x -= ext.width
+        elif align == "center":
+            x -= ext.width / 2
+        cr.set_source_rgba(*rgba)
+        cr.move_to(x, y)
+        cr.show_text(s)
+
+    def _draw_metric(self, _area, cr, width, height, key) -> None:
+        """One metric card: title + current value, a y-axis with gridlines and
+        numbers, an x-axis with time labels, and the series as a filled line."""
+        spec = next((sp for sp in HISTORY_SPECS if sp[0] == key), None)
+        if spec is None:
+            return
+        _k, label, _fixed, fmt = spec
+        series = self._history_series.get(key, [])
+        times = self._history_times
+        meta = self._history_meta.get(key)
+        r, g, b = HISTORY_COLORS.get(key, (0.22, 0.72, 0.45))
+
+        cr.set_source_rgba(0.5, 0.5, 0.5, 0.06)          # panel background
         cr.rectangle(0, 0, width, height)
         cr.fill()
-        # horizontal gridlines at 0 / 50% / 100% of the scale
-        cr.set_line_width(1.0)
-        for frac in (0.0, 0.5, 1.0):
-            y = pad + plot_h * (1.0 - frac)
-            cr.set_source_rgba(0.5, 0.5, 0.5, 0.25)
-            cr.move_to(pad, y)
-            cr.line_to(width - pad, y)
+
+        left, right, top, bottom = 48.0, 14.0, 30.0, 26.0
+        plot_w = max(1.0, width - left - right)
+        plot_h = max(1.0, height - top - bottom)
+        x0, y0 = left, top
+        lo = meta["lo"] if meta else 0.0
+        hi = meta["hi"] if meta else 1.0
+        step = meta["step"] if meta else hi
+        span = max(hi - lo, 1e-9)
+        summ = meta["summary"] if meta else None
+
+        self._chart_text(cr, 10, 20, label, size=13, rgba=(r, g, b, 1.0))      # title
+        if summ and summ.last is not None:                                     # current value
+            self._chart_text(cr, width - right, 20, fmt.format(summ.last),
+                             size=13, rgba=(0.92, 0.92, 0.92, 0.95), align="right")
+
+        cr.set_line_width(1.0)                            # horizontal gridlines + y numbers
+        v = lo
+        while v <= hi + step * 0.25:
+            y = y0 + plot_h * (1.0 - (v - lo) / span)
+            cr.set_source_rgba(0.5, 0.5, 0.5, 0.15)
+            cr.move_to(x0, y)
+            cr.line_to(x0 + plot_w, y)
             cr.stroke()
-        present = [v for v in values if v is not None]
-        if not present:
-            return
-        n = len(values)
-        cr.set_source_rgba(0.20, 0.70, 0.40, 1.0)
-        cr.set_line_width(2.0)
-        started = False
-        for i, v in enumerate(values):
-            if v is None:
-                started = False
-                continue
-            x = pad + (plot_w * i / (n - 1) if n > 1 else plot_w / 2)
-            y = pad + plot_h * (1.0 - (max(lo, min(hi, v)) - lo) / span)
-            if started:
-                cr.line_to(x, y)
-            else:
-                cr.move_to(x, y)
-                started = True
+            cr.set_source_rgba(0.6, 0.6, 0.6, 0.6)        # tick mark
+            cr.move_to(x0 - 4, y)
+            cr.line_to(x0, y)
+            cr.stroke()
+            self._chart_text(cr, x0 - 7, y + 3.5, self._fmt_axis(v, step),
+                             size=10, rgba=(0.62, 0.62, 0.62, 0.95), align="right")
+            v += step
+
+        cr.set_source_rgba(0.6, 0.6, 0.6, 0.55)           # axis lines (L-shape)
+        cr.set_line_width(1.2)
+        cr.move_to(x0, y0)
+        cr.line_to(x0, y0 + plot_h)
+        cr.line_to(x0 + plot_w, y0 + plot_h)
         cr.stroke()
+
+        n = len(series)
+        if not any(x is not None for x in series) or n == 0:
+            self._chart_text(cr, x0 + plot_w / 2, y0 + plot_h / 2 + 4, "no data yet",
+                             size=12, rgba=(0.6, 0.6, 0.6, 0.9), align="center")
+            return
+
+        def sx(i):
+            return x0 + (plot_w * i / (n - 1) if n > 1 else plot_w / 2)
+
+        def sy(val):
+            return y0 + plot_h * (1.0 - (max(lo, min(hi, val)) - lo) / span)
+
+        if times and n > 1:                               # x-axis time ticks + labels
+            for frac in (0.0, 0.5, 1.0):
+                idx = min(n - 1, max(0, round(frac * (n - 1))))
+                x = x0 + plot_w * frac
+                cr.set_source_rgba(0.6, 0.6, 0.6, 0.6)
+                cr.move_to(x, y0 + plot_h)
+                cr.line_to(x, y0 + plot_h + 4)
+                cr.stroke()
+                ts = times[idx] if idx < len(times) else None
+                if ts:
+                    al = "left" if frac == 0.0 else ("right" if frac == 1.0 else "center")
+                    self._chart_text(cr, x, y0 + plot_h + 17, self._fmt_clock(ts),
+                                     size=10, rgba=(0.62, 0.62, 0.62, 0.9), align=al)
+
+        runs, cur = [], []                                # split on gaps (None)
+        for i, val in enumerate(series):
+            if val is None:
+                if cur:
+                    runs.append(cur)
+                    cur = []
+            else:
+                cur.append((sx(i), sy(val)))
+        if cur:
+            runs.append(cur)
+
+        cr.set_source_rgba(r, g, b, 0.13)                 # area under the line
+        for run in runs:
+            if len(run) < 2:
+                continue
+            cr.move_to(run[0][0], y0 + plot_h)
+            for px, py in run:
+                cr.line_to(px, py)
+            cr.line_to(run[-1][0], y0 + plot_h)
+            cr.close_path()
+            cr.fill()
+
+        cr.set_source_rgba(r, g, b, 1.0)                  # the line itself
+        cr.set_line_width(2.0)
+        for run in runs:
+            if len(run) == 1:
+                cr.arc(run[0][0], run[0][1], 1.6, 0.0, 6.2832)
+                cr.fill()
+                continue
+            cr.move_to(*run[0])
+            for px, py in run[1:]:
+                cr.line_to(px, py)
+            cr.stroke()
 
     # ------------------------------------------------------------- doctor
 
@@ -1889,14 +2176,12 @@ class Window(Adw.ApplicationWindow):
             self.banner.set_revealed(False)
             if st.running and st.port_open:
                 kind, text = "success", "ONLINE"
-            elif st.running:
-                kind, text = "warning", "BOOTING"
+                self._booting = False        # fully up: the boot is over
+            elif st.running or self._booting:
+                kind, text = "warning", "BOOTING SERVER"
             else:
                 kind, text = "error", "OFFLINE"
-        for c in ("success", "warning", "error"):
-            self.badge.remove_css_class(c)
-        self.badge.add_css_class(kind)
-        self.badge.set_label(text)
+        self._set_badge(kind, text)
 
         s = self.remote.cfg.server
         target = "this machine (local transport)" if s.transport == "local" else f"{s.user}@{s.host}"
@@ -1946,6 +2231,12 @@ class Window(Adw.ApplicationWindow):
             f"{len(recent)}/{self.remote.cfg.watchdog.max_restarts} in window{last}")
         self._update_buttons()
 
+    def _set_badge(self, kind: str, text: str) -> None:
+        for c in ("success", "warning", "error"):
+            self.badge.remove_css_class(c)
+        self.badge.add_css_class(kind)
+        self.badge.set_label(text)
+
     def _gauge(self, bar: Gtk.LevelBar, label: Gtk.Label,
                used: int | None, total: int | None) -> None:
         if used and total:
@@ -1971,15 +2262,24 @@ class Window(Adw.ApplicationWindow):
         self.spinner.set_tooltip_text(msg or None)
         self._update_buttons()
 
-    def _run_action(self, busy: str, job, *, refresh_aux: bool = False) -> None:
-        """Run job(remote) on the worker; its return string becomes a toast."""
+    def _run_action(self, busy: str, job, *, refresh_aux: bool = False,
+                    booting: bool = False) -> None:
+        """Run job(remote) on the worker; its return string becomes a toast.
+
+        With booting=True the status badge reads "BOOTING SERVER" for the whole
+        action — no status probe runs while the worker is busy, so without this
+        the badge would otherwise sit on the stale "OFFLINE" until the boot ends."""
         if self._busy:
             self._toast(f"Busy: {self._busy}")
             return
         self._set_busy(busy)
         self._toast(busy, timeout=2)
+        if booting:
+            self._booting = True
+            self._set_badge("warning", "BOOTING SERVER")
 
         def done(msg):
+            self._booting = False
             self._set_busy("")
             if msg:
                 self._toast(str(msg), timeout=6)
@@ -1988,6 +2288,7 @@ class Window(Adw.ApplicationWindow):
                 self._refresh_aux()
 
         def err(e: Exception):
+            self._booting = False
             self._set_busy("")
             self._toast(f"Error: {e}", timeout=8)
             self._refresh(full=False)
@@ -2000,7 +2301,7 @@ class Window(Adw.ApplicationWindow):
                 r.ctl.start(wait=True, progress=lambda line: GLib.idle_add(
                     self.badge_sub.set_label, f"boot: {line}"))
             return "Server is up"
-        self._run_action("Starting server — a modded boot can take minutes…", job)
+        self._run_action("Starting server — a modded boot can take minutes…", job, booting=True)
 
     def _act_stop(self, *_):
         n = self.status.players.count if self.status.players else 0
@@ -2024,7 +2325,7 @@ class Window(Adw.ApplicationWindow):
             return "Server restarted"
         self._confirm("Restart the server?",
                       "Graceful stop (countdown + save) followed by a fresh boot.",
-                      "Restart", lambda: self._run_action("Restarting server…", job))
+                      "Restart", lambda: self._run_action("Restarting server…", job, booting=True))
 
     def _act_save(self, *_):
         def job(r: Remote) -> str:

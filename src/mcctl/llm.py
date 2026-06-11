@@ -135,7 +135,19 @@ def _adaptive_ok(model: str) -> bool:
     return bool(re.search(r"(opus-4-[678]|sonnet-4-6|fable|mythos)", model))
 
 
-def list_ollama_models(cfg: Config) -> list[str]:
+def _ollama_endpoint(url: str, path: str) -> str:
+    """Build an ollama API URL for `path`, pinning the IPv4 loopback.
+
+    ollama binds 127.0.0.1 by default. On hosts where `localhost` resolves to
+    IPv6 (::1) first — common on Linux — urllib connects to ::1, gets
+    ECONNREFUSED, and ollama looks like it isn't running even though it is.
+    Rewriting localhost -> 127.0.0.1 sidesteps that very common false negative."""
+    base = re.sub(r"(//)localhost(?=[:/]|$)", r"\g<1>127.0.0.1", url.rstrip("/"),
+                  flags=re.IGNORECASE)
+    return base + path
+
+
+def list_ollama_models(cfg: Config, *, timeout: float = 10.0) -> list[str]:
     """Names of the models a local ollama has pulled — the `ollama list` set.
 
     Queries ollama's /api/tags over plain HTTP (stdlib only, no client package),
@@ -143,10 +155,10 @@ def list_ollama_models(cfg: Config) -> list[str]:
     Raises LlmError with an actionable hint when ollama can't be reached."""
     import urllib.error
     import urllib.request
-    url = cfg.llm.ollama_url.rstrip("/") + "/api/tags"
+    url = _ollama_endpoint(cfg.llm.ollama_url, "/api/tags")
     req = urllib.request.Request(url, headers={"User-Agent": "mcctl"})
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310 - local, user-configured
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - local, user-configured
             data = json.loads(resp.read().decode("utf-8", "replace"))
     except (urllib.error.URLError, ConnectionError, OSError, TimeoutError, ValueError) as e:
         raise LlmError(
@@ -154,6 +166,19 @@ def list_ollama_models(cfg: Config) -> list[str]:
             f"check [llm].ollama_url. ({e})") from e
     names = sorted(m.get("name", "") for m in data.get("models", []) if m.get("name"))
     return names
+
+
+def probe_ollama(cfg: Config, *, timeout: float = 2.5) -> tuple[bool, list[str]]:
+    """Non-raising detection: (reachable, pulled-model-names).
+
+    Lets the GUI actively *find* a running local ollama (and what it can serve)
+    regardless of the configured provider — so the AI pages can report it and
+    offer to switch, instead of only discovering ollama when a request fails.
+    Kept snappy (short timeout) so a missing ollama never stalls the UI."""
+    try:
+        return True, list_ollama_models(cfg, timeout=timeout)
+    except LlmError:
+        return False, []
 
 
 # ---------------------------------------------------------------- backends
@@ -225,7 +250,7 @@ class _OllamaBackend:
         import urllib.error
         import urllib.request
         llm = self.cfg.llm
-        url = llm.ollama_url.rstrip("/") + "/api/chat"
+        url = _ollama_endpoint(llm.ollama_url, "/api/chat")
         body = json.dumps({
             "model": llm.ollama_model,
             "messages": [{"role": "system", "content": SYSTEM_PROMPT}, *messages],

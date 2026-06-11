@@ -192,3 +192,57 @@ def test_list_ollama_models_unreachable_is_actionable(monkeypatch):
     monkeypatch.setattr(urllib.request, "urlopen", boom)
     with pytest.raises(llm.LlmError, match="ollama serve"):
         llm.list_ollama_models(cfg)
+
+
+# ---------------------------------------------------------------- ollama detection
+
+def test_ollama_endpoint_pins_ipv4_loopback():
+    # localhost -> 127.0.0.1 dodges the IPv6 (::1) refusal that makes a running
+    # ollama look down on many Linux boxes; real hosts/IPs are left untouched.
+    assert llm._ollama_endpoint("http://localhost:11434", "/api/tags") \
+        == "http://127.0.0.1:11434/api/tags"
+    assert llm._ollama_endpoint("http://localhost:11434/", "/api/chat") \
+        == "http://127.0.0.1:11434/api/chat"
+    assert llm._ollama_endpoint("http://gpu-box:11434", "/api/tags") \
+        == "http://gpu-box:11434/api/tags"
+    assert llm._ollama_endpoint("http://127.0.0.1:11434", "/api/tags") \
+        == "http://127.0.0.1:11434/api/tags"
+    # a 'localhost' embedded in a longer hostname is not rewritten
+    assert llm._ollama_endpoint("http://localhost.lan:11434", "/x") \
+        == "http://localhost.lan:11434/x"
+
+
+def test_probe_ollama_detects_running_server(monkeypatch):
+    import io
+
+    cfg = Config()
+
+    class FakeResp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_urlopen(req, timeout=0):
+        assert req.full_url.endswith("/api/tags")
+        return FakeResp(json.dumps({"models": [{"name": "llama3.1:latest"}]}).encode())
+
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    up, names = llm.probe_ollama(cfg)
+    assert up is True
+    assert names == ["llama3.1:latest"]
+
+
+def test_probe_ollama_down_is_nonraising(monkeypatch):
+    import urllib.error
+    import urllib.request
+
+    def boom(req, timeout=0):
+        raise urllib.error.URLError("refused")
+
+    monkeypatch.setattr(urllib.request, "urlopen", boom)
+    up, names = llm.probe_ollama(Config())
+    assert up is False
+    assert names == []
