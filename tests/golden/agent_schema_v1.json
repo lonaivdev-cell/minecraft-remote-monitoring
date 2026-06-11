@@ -216,6 +216,14 @@
       },
       "summary": "Whitelist add/remove or toggle enforcement."
     },
+    "postmortem": {
+      "capability": null,
+      "destructive": false,
+      "params": {
+        "crash": "str"
+      },
+      "summary": "Deterministic what-went-wrong: crash report + events + watchdog history."
+    },
     "profile": {
       "capability": "actions",
       "destructive": false,

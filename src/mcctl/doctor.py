@@ -212,6 +212,9 @@ def run_doctor(cfg: Config, t: BaseTransport, *, fix: bool = False) -> list[Chec
         out.append(_warn("remote: spark", "no spark*.jar in mods/ — TPS monitoring degraded",
                          "MMC5 ships spark; if removed, add it back for `mcctl tps`"))
 
+    # ---------------- one restart authority + boot resilience (2026-06-11 incident)
+    out.extend(_ops_checks(cfg, t, fix=fix))
+
     # ---------------- RCON must NOT be internet-reachable (we tunnel over SSH)
     if s.transport == "ssh":
         try:
@@ -222,5 +225,81 @@ def run_doctor(cfg: Config, t: BaseTransport, *, fix: bool = False) -> list[Chec
                                  "over SSH and needs no open port"))
         except OSError:
             out.append(_ok("security: rcon port closed from outside"))
+
+    return out
+
+
+def _ops_checks(cfg: Config, t: BaseTransport, *, fix: bool) -> list[CheckResult]:
+    """The 2026-06-11 incident distilled: a mod crash must stay a *process*
+    problem. That requires exactly ONE restart authority and a box that boots
+    even when a data volume is missing. Each check below kills one rung of
+    that incident's escalation ladder."""
+    from . import state as statemod
+    out: list[CheckResult] = []
+    s = cfg.server
+    armed = statemod.load().get("armed", False)
+
+    # a leftover self-healing daemon on the box (the legacy mc-control watchdog)
+    r = t.run("pgrep -af 'mc-control|mc_watchdog' 2>/dev/null | grep -v pgrep || true",
+              timeout=15)
+    if r.out.strip():
+        out.append(_warn("ops: legacy watchdog on server",
+                         f"running: {r.out.strip().splitlines()[0][:90]}",
+                         "two self-healers fight over restarts and can relaunch a "
+                         "crash-looping server — disable it; the mcctl watchdog has "
+                         "the crash-loop breaker"))
+    else:
+        out.append(_ok("ops: no legacy watchdog on server"))
+
+    # a systemd unit that ALSO restarts the server while the watchdog is armed
+    r = t.run("systemctl show minecraft.service "
+              "-p LoadState,ActiveState,Restart 2>/dev/null || true", timeout=15)
+    info = dict(line.split("=", 1) for line in r.out.splitlines() if "=" in line)
+    if info.get("LoadState") == "loaded":
+        restart = info.get("Restart") or "no"
+        if restart != "no" and armed:
+            out.append(_warn("ops: two restart authorities",
+                             f"minecraft.service has Restart={restart} AND the mcctl "
+                             "watchdog is armed",
+                             "keep ONE healer: set Restart=no in the unit (systemd then "
+                             "only bounds shutdown, which is good) or `mcctl watchdog disarm`"))
+        else:
+            out.append(_ok("ops: systemd unit", f"minecraft.service Restart={restart}, "
+                           f"watchdog {'armed' if armed else 'disarmed'} — no conflict"))
+
+    # ServerStarterJar's own in-tmux relaunch loop: a crash loop no external
+    # breaker can arrest (this is what pegged the box during the incident)
+    try:
+        vtext = propsmod.load_variables(t, cfg)
+        restart_var = (propsmod.get_var(vtext, "RESTART") or "").lower()
+        if restart_var == "true":
+            if fix:
+                propsmod.save_variables(t, cfg, propsmod.set_var(vtext, "RESTART", "false"))
+                out.append(CheckResult("ops: start.sh RESTART", Level.FIXED, "true -> false"))
+            else:
+                out.append(_warn("ops: start.sh RESTART=true",
+                                 "start.sh relaunches the JVM in-place on every crash — "
+                                 "an unbounded loop the watchdog's breaker cannot stop",
+                                 "mcctl doctor --fix sets RESTART=false; restarts belong to "
+                                 "the watchdog (backoff + crash-loop breaker)"))
+        elif restart_var:
+            out.append(_ok("ops: start.sh RESTART=false"))
+    except (TransportError, propsmod.PropError):
+        pass  # variables.txt problems are already reported above
+
+    # data-volume mount: a missing/slow volume must degrade, not hang boot
+    r = t.run(f"findmnt -no TARGET -T {q(s.server_dir)} 2>/dev/null || true", timeout=15)
+    mnt = r.out.strip().splitlines()[-1].strip() if r.out.strip() else ""
+    if mnt and mnt != "/":
+        fr = t.run(f"awk -v m={q(mnt)} '$2 == m {{print $4}}' /etc/fstab 2>/dev/null || true",
+                   timeout=15)
+        opts = fr.out.strip()
+        if opts and "nofail" not in opts:
+            out.append(_warn("ops: fstab nofail", f"{mnt} mounts without nofail",
+                             "a missing/slow volume hangs boot with SSH down — add "
+                             "nofail,_netdev to its fstab line, then validate with "
+                             "`sudo findmnt --verify`"))
+        elif opts:
+            out.append(_ok("ops: fstab nofail", mnt))
 
     return out

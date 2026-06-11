@@ -95,8 +95,12 @@ def redact(text: str) -> str:
 
 def envelope(kind: str, text: str, *, limit: int = 120_000) -> str:
     """Wrap untrusted content; oversized payloads keep the head and the tail
-    (errors cluster at the end of logs, context at the top of crash reports)."""
+    (errors cluster at the end of logs, context at the top of crash reports).
+
+    A literal "</data" inside the content is neutralized so injected log text
+    can never close the envelope early and smuggle instructions outside it."""
     text = redact(text)
+    text = text.replace("</data", "<\\/data")
     if len(text) > limit:
         head, tail = text[: limit // 3], text[-2 * limit // 3:]
         text = f"{head}\n[... {len(text) - limit:,} bytes elided by mcctl ...]\n{tail}"
