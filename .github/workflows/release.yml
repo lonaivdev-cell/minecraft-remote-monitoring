@@ -41,6 +41,25 @@ jobs:
       - name: Install SDK packages
         run: yes | sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools" >/dev/null
 
+      # Derive the APK version from the pushed tag so the installed app matches
+      # the GitHub release Obtainium shows. The tag (v3.0.0) becomes:
+      #   versionName = 3.0.0
+      #   versionCode = major*10000 + minor*100 + patch = 30000
+      # versionCode MUST increase every release or Android/Obtainium will treat
+      # the new APK as already-installed and refuse to upgrade.
+      - name: Derive version from tag
+        id: version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"          # strip leading "v": v3.0.0 -> 3.0.0
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$TAG"
+          MAJOR=${MAJOR:-0}; MINOR=${MINOR:-0}; PATCH=${PATCH:-0}
+          # Strip any pre-release/build suffix from patch (e.g. 0-rc1 -> 0).
+          PATCH=${PATCH%%[-+]*}
+          CODE=$((10#$MAJOR * 10000 + 10#$MINOR * 100 + 10#$PATCH))
+          echo "name=$TAG"  >> "$GITHUB_OUTPUT"
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          echo "Resolved versionName=$TAG versionCode=$CODE"
+
       # Decode the keystore from the KEYSTORE_BASE64 secret when present.
       # To set this up:
       #   1. base64 -w0 your.keystore > keystore.b64  (Linux) or
@@ -64,6 +83,8 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEYSTORE_KEY_PASSWORD }}
         run: |
           ./gradlew :app:assembleRelease --no-daemon \
+            -PappVersionName="${{ steps.version.outputs.name }}" \
+            -PappVersionCode="${{ steps.version.outputs.code }}" \
             -Pandroid.injected.signing.store.file="${{ steps.keystore.outputs.path }}" \
             -Pandroid.injected.signing.store.password="$STORE_PASSWORD" \
             -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
@@ -74,7 +95,10 @@ jobs:
       # side-loadable on any device with "install from unknown sources" enabled.
       - name: Assemble debug APK (fallback)
         if: ${{ steps.keystore.outputs.path == '' }}
-        run: ./gradlew :app:assembleDebug --no-daemon
+        run: |
+          ./gradlew :app:assembleDebug --no-daemon \
+            -PappVersionName="${{ steps.version.outputs.name }}" \
+            -PappVersionCode="${{ steps.version.outputs.code }}"
 
       - name: Locate and rename APK
         id: apk
