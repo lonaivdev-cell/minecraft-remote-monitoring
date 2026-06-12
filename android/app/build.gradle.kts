@@ -7,6 +7,17 @@ plugins {
     alias(libs.plugins.compose.compiler)
 }
 
+// Version is driven by the release tag so the APK Android installs matches the
+// GitHub release Obtainium shows. CI passes -PappVersionName / -PappVersionCode
+// derived from the pushed tag (see .github/workflows/release.yml). Local/dev
+// builds fall back to the defaults below.
+//
+// CRITICAL: versionCode must increase with every release, or Android/Obtainium
+// treats the new APK as "already installed" and refuses to upgrade. The release
+// workflow computes it from semver as major*10000 + minor*100 + patch.
+val appVersionName = (project.findProperty("appVersionName") as String?) ?: "0.6.0"
+val appVersionCode = (project.findProperty("appVersionCode") as String?)?.toIntOrNull() ?: 1
+
 android {
     namespace = "com.carborioland.mcctl"
     compileSdk = 35
@@ -15,8 +26,8 @@ android {
         applicationId = "com.carborioland.mcctl"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.6.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
         vectorDrawables { useSupportLibrary = true }
     }
 
