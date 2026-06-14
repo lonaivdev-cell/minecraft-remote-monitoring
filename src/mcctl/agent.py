@@ -30,6 +30,7 @@ from . import __version__, events, logs, metrics, state, util
 from .backup import BackupEntry, BackupError, BackupManager
 from .config import BackupCfg, LlmCfg, MetricsCfg, ServerCfg, UiCfg, WatchdogCfg
 from .console import ConsoleError
+from .modconfig import ConfigFile as _ConfigFile
 from .players import PlayerError, Players
 from .props import PropError
 from .server import ServerError, Status
@@ -507,6 +508,53 @@ def _mods_list(srv: AgentServer, params: dict) -> dict:
     return {"mods": [m.to_dict() for m in M.list_mods(srv.ctx.t, srv.ctx.cfg)]}
 
 
+@method("config.tree", params={"mods": "bool"},
+        summary="List config/ files (size/mtime/format, best-effort owning mod).")
+def _config_tree(srv: AgentServer, params: dict) -> dict:
+    from . import modconfig as MC
+    associate = params.get("mods", True)
+    files = MC.list_config_files(srv.ctx.t, srv.ctx.cfg, associate_mods=associate)
+    return {"root": MC.config_dir(srv.ctx.cfg), "files": [f.to_dict() for f in files]}
+
+
+@method("config.get", params={"path": "str"},
+        summary="Read one config/ file (path relative to config/, size-capped).")
+def _config_get(srv: AgentServer, params: dict) -> dict:
+    from . import modconfig as MC
+    return MC.read_config(srv.ctx.t, srv.ctx.cfg, params["path"])
+
+
+@method("config.set", params={"path": "str", "text": "str", "reload": "bool"},
+        summary="Write a config/ file (TOML/JSON validated, atomic, .bak); reload=true runs /reload too.",
+        capability="destructive", destructive=True)
+def _config_set(srv: AgentServer, params: dict) -> dict:
+    from . import modconfig as MC
+    path, text = params["path"], params["text"]
+    if not isinstance(text, str):
+        raise RpcError(INVALID_PARAMS, "text must be a string")
+    res = MC.write_config(srv.ctx.t, srv.ctx.cfg, path, text)
+    res["ok"] = True
+    res["running"] = srv.ctx.ctl.find_pid() is not None
+    res["reloaded"] = False
+    if params.get("reload") and res["running"]:
+        try:
+            res["reload_output"] = MC.trigger_reload(srv.ctx.console)[:200]
+            res["reloaded"] = True
+        except ConsoleError as e:
+            res["reload_output"] = f"reload failed: {e}"
+    return res
+
+
+@method("config.reload",
+        summary="Run /reload (datapacks/recipes/loot/tags) — not mod TOML configs.",
+        capability="actions")
+def _config_reload(srv: AgentServer, params: dict) -> dict:
+    from . import modconfig as MC
+    if srv.ctx.ctl.find_pid() is None:
+        raise RpcError(APP_ERROR, "server is not running", {"exit_code": 1})
+    return {"ok": True, "output": MC.trigger_reload(srv.ctx.console)}
+
+
 @method("inspect", params={"section": "str"},
         summary="Deep OS/JVM introspection of one section.")
 def _inspect(srv: AgentServer, params: dict) -> dict:
@@ -584,6 +632,7 @@ def build_schema() -> dict:
                         "size": "int", "full": "bool", "age_s": "float"},
         "Event": {"ts": "float", "kind": " | ".join(events.KINDS),
                   "detail": "str", "urgency": "normal | critical", "data": "dict"},
+        "ConfigFile": _dataclass_types(_ConfigFile),
         "config.server": _dataclass_types(ServerCfg),
         "config.backup": _dataclass_types(BackupCfg),
         "config.watchdog": _dataclass_types(WatchdogCfg),
