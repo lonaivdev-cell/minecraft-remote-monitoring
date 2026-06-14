@@ -110,6 +110,32 @@ data class ModInfo(
     val title: String get() = name.ifBlank { file }
 }
 
+/** One file under `config/` as listed by `config.tree`. */
+@Serializable
+data class ConfigFile(
+    val path: String = "",
+    val size: Long = 0,
+    val mtime: Long = 0,
+    val fmt: String = "",
+    val modId: String = "",
+    val modName: String = "",
+) {
+    /** Just the filename, for a compact row title. */
+    val name: String get() = path.substringAfterLast('/')
+
+    /** Picker group: the owning mod, or a catch-all for the unassociated files. */
+    val group: String get() = modName.ifBlank { modId }.ifBlank { "Other / unmatched" }
+}
+
+/** The contents of one config file, from `config.get`. */
+@Serializable
+data class ConfigContent(
+    val path: String = "",
+    val text: String = "",
+    val fmt: String = "",
+    val bytes: Long = 0,
+)
+
 /**
  * A flattened metrics sample as written by `metrics.sample_from_status`. The history
  * charts derive percentages from the raw byte counts exactly like the desktop GUI.

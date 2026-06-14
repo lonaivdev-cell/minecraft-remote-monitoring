@@ -27,7 +27,7 @@ gi.require_version("Adw", "1")
 
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
-from . import __version__, inspector, llm, logs, metrics, mods, state, util  # noqa: E402
+from . import __version__, inspector, llm, logs, metrics, modconfig, mods, state, util  # noqa: E402
 from . import props as propsmod  # noqa: E402
 from .backup import BackupManager  # noqa: E402
 from .config import Config, ConfigError  # noqa: E402
@@ -163,6 +163,11 @@ class Window(Adw.ApplicationWindow):
         self._mod_rows: list[Gtk.Widget] = []
         self._mods_refreshing = False
         self._mods_loaded = False
+        self._cfg_files: list = []                     # mod-config browser state
+        self._cfg_groups: list[tuple[str, list]] = []  # (label, [ConfigFile]) ordered
+        self._cfg_file_rows: list[Gtk.Widget] = []
+        self._cfg_loaded = False
+        self._cfg_loading = False
         self._inspect_refreshing = False
         self._ai_running = False
         self._doctor_rows: list[Gtk.Widget] = []
@@ -216,6 +221,7 @@ class Window(Adw.ApplicationWindow):
             (self._build_players, "players", "Players"),
             (self._build_backups, "backups", "Backups"),
             (self._build_mods, "mods", "Mods"),
+            (self._build_mod_configs, "modconfig", "Mod Configs"),
             (self._build_inspect, "inspect", "Inspect"),
             (self._build_ai, "ai", "AI"),
             (self._build_chat, "chat", "Chat"),
@@ -403,6 +409,35 @@ class Window(Adw.ApplicationWindow):
         self.mods_group.set_header_suffix(refresh)
         box.append(self.mods_group)
         return Gtk.ScrolledWindow(child=Adw.Clamp(maximum_size=860, child=box),
+                                  hscrollbar_policy=Gtk.PolicyType.NEVER)
+
+    def _build_mod_configs(self) -> Gtk.Widget:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18,
+                      margin_top=24, margin_bottom=24, margin_start=12, margin_end=12)
+
+        picker = Adw.PreferencesGroup(
+            title="Mod configs",
+            description="Edit files under config/. Saved changes live-reload where the "
+                        "mod supports it; startup/cached values need a restart.")
+        reload_btn = Gtk.Button(label="Reload list")
+        reload_btn.connect("clicked", lambda *_: self._refresh_mod_configs(force=True))
+        picker.set_header_suffix(reload_btn)
+        self.cfg_group_drop = Gtk.DropDown(model=Gtk.StringList.new(["(loading…)"]))
+        self.cfg_group_drop.connect("notify::selected", lambda *_: self._cfg_render())
+        drop_row = Adw.ActionRow(title="Mod")
+        drop_row.add_suffix(self.cfg_group_drop)
+        picker.add(drop_row)
+        self.cfg_search = Gtk.SearchEntry(placeholder_text="Search every config file by name…",
+                                          hexpand=True)
+        self.cfg_search.connect("search-changed", lambda *_: self._cfg_render())
+        search_row = Adw.ActionRow(title="Find")
+        search_row.add_suffix(self.cfg_search)
+        picker.add(search_row)
+        box.append(picker)
+
+        self.cfg_files_group = Adw.PreferencesGroup(title="Files")
+        box.append(self.cfg_files_group)
+        return Gtk.ScrolledWindow(child=Adw.Clamp(maximum_size=900, child=box),
                                   hscrollbar_policy=Gtk.PolicyType.NEVER)
 
     def _build_inspect(self) -> Gtk.Widget:
@@ -1125,6 +1160,8 @@ class Window(Adw.ApplicationWindow):
             self._refresh_backups()
         elif page == "mods" and not self._mods_loaded:
             self._refresh_mods()  # scan once; mods rarely change while we watch
+        elif page == "modconfig" and not self._cfg_loaded:
+            self._refresh_mod_configs()
         elif page == "inspect" and self.inspect_view.get_buffer().get_char_count() == 0:
             self._refresh_inspect()
         elif page == "doctor" and not self._doctor_rows:
@@ -1325,6 +1362,181 @@ class Window(Adw.ApplicationWindow):
         if m.description:
             row.set_tooltip_text(m.description)
         return row
+
+    # ------------------------------------------------------------- mod configs
+
+    def _refresh_mod_configs(self, *, force: bool = False) -> None:
+        if self._cfg_loading or (self._busy and not force):
+            return
+        self._cfg_loading = True
+        self.cfg_files_group.set_description("Scanning config/ on the server…")
+
+        def done(files):
+            self._cfg_loading = False
+            self._cfg_loaded = True
+            self._cfg_files = files
+            self._cfg_build_groups(files)
+            labels = [lbl for lbl, _ in self._cfg_groups]
+            self.cfg_group_drop.set_model(Gtk.StringList.new(labels or ["(none)"]))
+            self._cfg_render()
+
+        def err(e: Exception):
+            self._cfg_loading = False
+            self.cfg_files_group.set_description(str(e)[:160])
+
+        self.worker.submit(
+            lambda: modconfig.list_config_files(self.remote.t, self.remote.cfg), done, err)
+
+    def _cfg_build_groups(self, files) -> None:
+        by_mod: dict[str, list] = {}
+        for f in files:
+            by_mod.setdefault(f.mod_name or f.mod_id or "", []).append(f)
+        groups = [(f"{k} ({len(by_mod[k])})", by_mod[k])
+                  for k in sorted((k for k in by_mod if k), key=str.lower)]
+        if "" in by_mod:
+            groups.append((f"Other / unmatched ({len(by_mod[''])})", by_mod[""]))
+        self._cfg_groups = groups
+
+    def _cfg_render(self) -> None:
+        if not self._cfg_loaded:
+            return
+        cap = 250
+        query = self.cfg_search.get_text().strip().lower()
+        if query:
+            files = [f for f in self._cfg_files
+                     if query in f.path.lower() or query in (f.mod_name or "").lower()]
+            scope = f"{len(files)} match"
+        else:
+            idx = self.cfg_group_drop.get_selected()
+            files = self._cfg_groups[idx][1] if 0 <= idx < len(self._cfg_groups) else []
+            scope = f"{len(files)} file(s)"
+        shown = files[:cap]
+        extra = len(files) - len(shown)
+        self.cfg_files_group.set_description(
+            scope + (f" · showing first {cap}, narrow the search for the rest" if extra > 0 else ""))
+        self._cfg_file_rows = self._swap_rows(
+            self.cfg_files_group, self._cfg_file_rows, [self._cfg_file_row(f) for f in shown])
+
+    def _cfg_file_row(self, f) -> Adw.ActionRow:
+        name = f.path.rsplit("/", 1)[-1]
+        bits = ([f.path] if "/" in f.path else []) + [f.fmt or "?", util.human_bytes(f.size)]
+        row = Adw.ActionRow(title=name, subtitle=" · ".join(bits))
+        edit = Gtk.Button(label="Edit", valign=Gtk.Align.CENTER)
+        edit.connect("clicked", lambda *_: self._cfg_open_editor(f))
+        row.add_suffix(edit)
+        row.set_activatable_widget(edit)
+        return row
+
+    def _cfg_open_editor(self, f) -> None:
+        win = Adw.Window(title=f.path, transient_for=self, default_width=860, default_height=640)
+        header = Adw.HeaderBar()
+        restart_btn = Gtk.Button(label="Restart server",
+                                 tooltip_text="Graceful restart — guarantees every config change loads")
+        restart_btn.add_css_class("destructive-action")
+        restart_btn.connect("clicked", lambda *_: self._cfg_restart(win))
+        header.pack_start(restart_btn)
+        save_btn = Gtk.Button(label="Save")
+        save_btn.add_css_class("suggested-action")
+        save_btn.set_sensitive(False)
+        header.pack_end(save_btn)
+
+        info = Gtk.Label(
+            label="Save writes the file (atomic, timestamped .bak) and, if the server is up, runs "
+                  "/reload. NeoForge live-reloads mods that support it; the rest apply on restart.",
+            xalign=0, wrap=True)
+        info.add_css_class("dim-label")
+        info.add_css_class("caption")
+        view = Gtk.TextView(monospace=True, editable=True, wrap_mode=Gtk.WrapMode.NONE)
+        for setter in (view.set_left_margin, view.set_right_margin,
+                       view.set_top_margin, view.set_bottom_margin):
+            setter(8)
+        scroller = Gtk.ScrolledWindow(child=view, vexpand=True)
+        status = Gtk.Label(label="Loading…", xalign=0, wrap=True)
+        status.add_css_class("dim-label")
+        status.add_css_class("caption")
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6,
+                       margin_top=10, margin_bottom=10, margin_start=10, margin_end=10)
+        body.append(info)
+        body.append(scroller)
+        body.append(status)
+        tv = Adw.ToolbarView(content=body)
+        tv.add_top_bar(header)
+        win.set_content(tv)
+
+        def done(res):
+            view.get_buffer().set_text(res["text"])
+            status.set_label(f"{res['fmt'] or 'text'} · {util.human_bytes(res['bytes'])} · "
+                             "a .bak is kept on every save")
+            save_btn.set_sensitive(True)
+
+        def err(e: Exception):
+            status.set_label(f"Couldn't load: {e}")
+
+        self.worker.submit(
+            lambda: modconfig.read_config(self.remote.t, self.remote.cfg, f.path), done, err)
+        save_btn.connect("clicked", lambda *_: self._cfg_save(f, view, status))
+        win.present()
+
+    def _cfg_save(self, f, view: Gtk.TextView, status: Gtk.Label) -> None:
+        buf = view.get_buffer()
+        text = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False)
+        try:
+            modconfig.validate_text(f.path, text)  # instant, precise error before any write
+        except modconfig.ConfigEditError as e:
+            status.set_label(str(e))
+            self._toast(str(e), timeout=8)
+            return
+        if self._busy:
+            self._toast(f"Busy: {self._busy}")
+            return
+        self._set_busy(f"Saving config/{f.path}…")
+        status.set_label("Saving…")
+
+        def job():
+            modconfig.write_config(self.remote.t, self.remote.cfg, f.path, text)
+            running = self.remote.ctl.find_pid() is not None
+            reloaded = False
+            if running:
+                with contextlib.suppress(ConsoleError):
+                    modconfig.trigger_reload(self.remote.console)
+                    reloaded = True
+            return running, reloaded
+
+        def done(res):
+            running, reloaded = res
+            self._set_busy("")
+            if not running:
+                msg = "Saved — .bak kept; loads on next start"
+            elif reloaded:
+                msg = "Saved — .bak kept, /reload run; cached values need a restart"
+            else:
+                msg = "Saved — .bak kept; live-reload where the mod supports it"
+            self._toast(msg, timeout=6)
+            status.set_label(msg + ". Restart for a guaranteed full apply.")
+
+        def err(e: Exception):
+            self._set_busy("")
+            status.set_label(f"Save failed: {e}")
+            self._toast(f"Error: {e}", timeout=8)
+
+        self.worker.submit(job, done, err)
+
+    def _cfg_restart(self, win) -> None:
+        def go():
+            win.close()
+
+            def job(r: Remote) -> str:
+                with util.OpsLock():
+                    r.ctl.restart(reason="config change")
+                return "Restarted — config changes fully applied"
+
+            self._run_action("Restarting…", job, booting=True)
+
+        self._confirm(
+            "Restart the server?",
+            "A graceful restart (warn players → save → stop → start) guarantees every config "
+            "change is loaded, including startup and cached values.",
+            "Restart", go)
 
     def _refresh_inspect(self) -> None:
         if self._inspect_refreshing:

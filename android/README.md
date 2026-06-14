@@ -23,6 +23,7 @@ agent method:
 | **Players** | `players.list`, `players.whitelist`/`.op`/`.kick`/`.ban` |
 | **Backups** | `backup.list`/`.create`/`.prune`/`.verify`/`.restore` (typed confirm) |
 | **Mods** | `mods.list` |
+| **Mod Configs** | `config.tree`/`.get`/`.set` (browse by mod, edit in place, save = live-reload + restart) |
 | **Properties** | `props.list`/`.set` (validated) |
 | **JVM** | `jvm.show`/`.heap` |
 | **Crashes** | `logs.crashes`, `postmortem` |

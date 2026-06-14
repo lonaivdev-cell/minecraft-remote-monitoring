@@ -22,6 +22,7 @@ from .console import Console, ConsoleError
 from .doctor import Level, run_doctor
 from .inspector import InspectError
 from .llm import LlmError
+from .modconfig import ConfigEditError
 from .mods import ModsError
 from .players import PlayerError, Players
 from .props import PropError
@@ -681,6 +682,108 @@ def cmd_mods(ctx: Ctx) -> int:
     return 0
 
 
+def cmd_config(ctx: Ctx) -> int:
+    from . import modconfig as MC
+    a = ctx.args
+    sub = a.config_cmd or "tree"
+    if sub == "tree":
+        files = MC.list_config_files(ctx.t, ctx.cfg, associate_mods=not a.no_mods)
+        if a.mod:
+            files = [f for f in files if f.mod_id == a.mod]
+        if a.json:
+            print(json.dumps([f.to_dict() for f in files], indent=2))
+            return 0
+        if not files:
+            rc.print("[yellow]no config files found[/yellow]")
+            return 0
+        total = sum(f.size for f in files)
+        t = Table(title=f"{len(files)} config files in {MC.config_dir(ctx.cfg)} "
+                        f"({util.human_bytes(total)})")
+        t.add_column("file", style="bold")
+        t.add_column("mod", style="dim")
+        t.add_column("fmt")
+        t.add_column("size", justify="right")
+        for f in files:
+            t.add_row(f.path, f.mod_name or f.mod_id or "—", f.fmt or "?", util.human_bytes(f.size))
+        rc.print(t)
+        return 0
+    if sub == "get":
+        res = MC.read_config(ctx.t, ctx.cfg, a.path)
+        sys.stdout.write(res["text"])
+        if not res["text"].endswith("\n"):
+            sys.stdout.write("\n")
+        return 0
+    if sub == "set":
+        from pathlib import Path
+        text = sys.stdin.read() if a.stdin else Path(a.file).read_text(encoding="utf-8")
+        MC.validate_text(a.path, text)  # fail fast with a clear message before any write
+        MC.write_config(ctx.t, ctx.cfg, a.path, text)
+        rc.print(f"[green]wrote[/green] config/{a.path} (.bak kept on the server)")
+        return _config_apply(ctx, a)
+    if sub == "edit":
+        return _config_edit(ctx, a)
+    return 2
+
+
+def _config_apply(ctx: Ctx, a: argparse.Namespace) -> int:
+    """Honest 'smart apply' after a config write: live-reload reality + opt-in /reload/restart."""
+    from . import modconfig as MC
+    if ctx.ctl.find_pid() is None:
+        rc.print("[dim]server is down — the change loads on next start[/dim]")
+        return 0
+    rc.print("[dim]NeoForge live-reloads mods that support it; "
+             "startup/cached values need a restart[/dim]")
+    if a.reload:
+        out = MC.trigger_reload(ctx.console)
+        rc.print(f"[green]/reload:[/green] {out.strip()[:120]}")
+    if a.restart:
+        ctx.ctl.restart(reason="config change")
+        rc.print("[green]restarted[/green] — change fully applied")
+    elif not a.reload:
+        rc.print("[dim]add --reload (datapack data) or --restart (guaranteed full apply)[/dim]")
+    return 0
+
+
+def _config_edit(ctx: Ctx, a: argparse.Namespace) -> int:
+    import contextlib
+    import os
+    import shlex
+    import subprocess
+    import tempfile
+    from pathlib import Path
+
+    from . import modconfig as MC
+    res = MC.read_config(ctx.t, ctx.cfg, a.path)
+    rel = res["path"]
+    editor = os.environ.get("EDITOR") or os.environ.get("VISUAL") or "nano"
+    with tempfile.NamedTemporaryFile("w", suffix="." + (res["fmt"] or "txt"),
+                                     delete=False, encoding="utf-8") as fh:
+        fh.write(res["text"])
+        tmp = fh.name
+    try:
+        while True:
+            subprocess.call([*shlex.split(editor), tmp])
+            new_text = Path(tmp).read_text(encoding="utf-8")
+            if new_text == res["text"]:
+                rc.print("[yellow]no changes — nothing written[/yellow]")
+                return 0
+            try:
+                MC.validate_text(rel, new_text)
+            except ConfigEditError as e:
+                rc.print(f"[red]{e}[/red]")
+                if not _confirm("re-open the editor to fix it?", a.yes):
+                    rc.print("[yellow]aborted — nothing written[/yellow]")
+                    return 1
+                continue
+            break
+        MC.write_config(ctx.t, ctx.cfg, rel, new_text)
+        rc.print(f"[green]wrote[/green] config/{rel} (.bak kept on the server)")
+        return _config_apply(ctx, a)
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+
+
 def _ai_chat(ctx: Ctx, opening: str) -> int:
     """Interactive multi-turn conversation. The first turn carries current
     server context (status + recent log); the rest is a plain chat loop."""
@@ -1159,6 +1262,31 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_mods)
 
+    sp = sub.add_parser("config", help="browse & edit mod config files under config/ (live-reload aware)")
+    csub = nested(sp, "config_cmd")
+    ct = csub.add_parser("tree", help="list config files (best-effort grouped by mod)")
+    ct.add_argument("--mod", help="only files owned by this mod id")
+    ct.add_argument("--no-mods", dest="no_mods", action="store_true",
+                    help="skip jar-metadata association (faster)")
+    ct.add_argument("--json", action="store_true")
+    cg = csub.add_parser("get", help="print a config file (path relative to config/)")
+    cg.add_argument("path")
+    cs = csub.add_parser("set", help="overwrite a config file from a local file or stdin")
+    cs.add_argument("path")
+    csrc = cs.add_mutually_exclusive_group(required=True)
+    csrc.add_argument("--file", metavar="LOCAL", help="local file whose contents to upload")
+    csrc.add_argument("--stdin", action="store_true", help="read the new contents from stdin")
+    cs.add_argument("--reload", action="store_true", help="also run /reload after writing")
+    cs.add_argument("--restart", action="store_true", help="graceful restart after writing (full apply)")
+    cs.add_argument("--yes", action="store_true")
+    ce = csub.add_parser("edit", help="fetch -> $EDITOR -> validate -> upload (.bak kept)")
+    ce.add_argument("path")
+    ce.add_argument("--reload", action="store_true", help="run /reload after a successful edit")
+    ce.add_argument("--restart", action="store_true", help="graceful restart after a successful edit")
+    ce.add_argument("--yes", action="store_true")
+    sp.set_defaults(func=cmd_config, config_cmd=None, mod=None, no_mods=False, json=False,
+                    path=None, file=None, stdin=False, reload=False, restart=False, yes=False)
+
     sp = sub.add_parser("ai", help="LLM analysis: logs, crash reports, mods, inspections")
     asub = nested(sp, "ai_cmd")
     al = asub.add_parser("logs", help="review server state + recent log")
@@ -1253,7 +1381,7 @@ def main(argv: list[str] | None = None) -> int:
             metrics.MetricsError, util.LockHeldError, PropError) as e:
         rc.print(f"[red]error:[/red] {e}")
         return 1
-    except (InspectError, ModsError, LlmError) as e:
+    except (InspectError, ModsError, LlmError, ConfigEditError) as e:
         rc.print(f"[red]error:[/red] {e}")
         return 1
     finally:

@@ -2,6 +2,8 @@ package com.carborioland.mcctl.core.rpc
 
 import com.carborioland.mcctl.core.model.BackupEntry
 import com.carborioland.mcctl.core.model.Capability
+import com.carborioland.mcctl.core.model.ConfigContent
+import com.carborioland.mcctl.core.model.ConfigFile
 import com.carborioland.mcctl.core.model.CrashReport
 import com.carborioland.mcctl.core.model.HealthReport
 import com.carborioland.mcctl.core.model.HelloResult
@@ -270,6 +272,33 @@ class AgentClient(
 
     suspend fun inspect(section: String): InspectorSection =
         decode(callRaw("inspect", obj { put("section", JsonPrimitive(section)) }), InspectorSection.serializer())
+
+    // ------------------------------------------------------------------ mod configs
+
+    suspend fun configTree(mods: Boolean = true): List<ConfigFile> =
+        callRaw("config.tree", obj { put("mods", JsonPrimitive(mods)) })?.arrayField("files")
+            ?.let { McctlJson.decodeFromJsonElement(ListSerializer(ConfigFile.serializer()), it) }
+            ?: emptyList()
+
+    suspend fun configGet(path: String): ConfigContent =
+        decode(callRaw("config.get", obj { put("path", JsonPrimitive(path)) }), ConfigContent.serializer())
+
+    /**
+     * Write a config file. Destructive — sends confirm:true; confirm with the user first.
+     * `reload=true` also runs /reload on a live server. Returns a short, honest status line.
+     */
+    suspend fun configSet(path: String, text: String, reload: Boolean = true): String {
+        val r = callRaw("config.set", confirmed {
+            put("path", JsonPrimitive(path)); put("text", JsonPrimitive(text)); put("reload", JsonPrimitive(reload))
+        })
+        val running = r?.bool("running") ?: false
+        val reloaded = r?.bool("reloaded") ?: false
+        return when {
+            !running -> "Saved — .bak kept; loads on next start"
+            reloaded -> "Saved — .bak kept, /reload run; cached values need a restart"
+            else -> "Saved — .bak kept; live-reload where the mod supports it"
+        }
+    }
 
     // ------------------------------------------------------------------ watchdog / events
 

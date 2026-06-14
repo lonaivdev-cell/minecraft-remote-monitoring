@@ -85,6 +85,38 @@
       },
       "summary": "Run an arbitrary console command (rcon preferred, tmux fallback)."
     },
+    "config.get": {
+      "capability": null,
+      "destructive": false,
+      "params": {
+        "path": "str"
+      },
+      "summary": "Read one config/ file (path relative to config/, size-capped)."
+    },
+    "config.reload": {
+      "capability": "actions",
+      "destructive": false,
+      "params": {},
+      "summary": "Run /reload (datapacks/recipes/loot/tags) \u2014 not mod TOML configs."
+    },
+    "config.set": {
+      "capability": "destructive",
+      "destructive": true,
+      "params": {
+        "path": "str",
+        "reload": "bool",
+        "text": "str"
+      },
+      "summary": "Write a config/ file (TOML/JSON validated, atomic, .bak); reload=true runs /reload too."
+    },
+    "config.tree": {
+      "capability": null,
+      "destructive": false,
+      "params": {
+        "mods": "bool"
+      },
+      "summary": "List config/ files (size/mtime/format, best-effort owning mod)."
+    },
     "events.list": {
       "capability": null,
       "destructive": false,
@@ -336,6 +368,14 @@
       "path": "str",
       "size": "int",
       "ts": "str (ISO 8601)"
+    },
+    "ConfigFile": {
+      "fmt": "str",
+      "mod_id": "str",
+      "mod_name": "str",
+      "mtime": "int",
+      "path": "str",
+      "size": "int"
     },
     "Event": {
       "data": "dict",

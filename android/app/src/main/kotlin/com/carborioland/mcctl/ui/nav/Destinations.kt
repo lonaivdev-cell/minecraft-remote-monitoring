@@ -7,6 +7,7 @@ import androidx.compose.material.icons.filled.Biotech
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Hub
@@ -47,6 +48,7 @@ enum class Destination(
     Players("players", "Players", Icons.Filled.Group, NavGroup.Manage),
     Backups("backups", "Backups", Icons.Filled.Archive, NavGroup.Manage),
     Mods("mods", "Mods", Icons.Filled.Extension, NavGroup.Manage),
+    ModConfigs("modconfigs", "Mod Configs", Icons.Filled.Edit, NavGroup.Manage),
     Properties("properties", "Properties", Icons.Filled.Tune, NavGroup.Manage),
     Jvm("jvm", "JVM", Icons.Filled.Memory, NavGroup.Manage),
 
