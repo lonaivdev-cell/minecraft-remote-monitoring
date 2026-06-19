@@ -19,6 +19,7 @@ from . import __version__, logs, metrics, state, util
 from .backup import BackupError, BackupManager
 from .config import Config, ConfigError, write_template
 from .console import Console, ConsoleError
+from .crafting import CraftError
 from .doctor import Level, run_doctor
 from .inspector import InspectError
 from .llm import LlmError
@@ -682,6 +683,104 @@ def cmd_mods(ctx: Ctx) -> int:
     return 0
 
 
+def cmd_recipes(ctx: Ctx) -> int:
+    from . import crafting
+    a = ctx.args
+    sub = a.recipes_cmd or "search"
+    if sub == "search":
+        recipes, truncated = crafting.search_recipes(ctx.t, ctx.cfg, query=a.query or "", limit=a.n)
+        if a.json:
+            print(json.dumps({"recipes": [r.to_dict() for r in recipes],
+                              "truncated": truncated}, indent=2))
+            return 0
+        if not recipes:
+            rc.print(f"[yellow]no crafting recipes match {a.query!r}[/yellow]")
+            return 0
+        t = Table(title=f"{len(recipes)} crafting recipes"
+                        + (f" matching {a.query!r}" if a.query else ""))
+        t.add_column("recipe id", style="bold")
+        t.add_column("type")
+        t.add_column("makes", justify="right")
+        t.add_column("output")
+        for r in recipes:
+            t.add_row(r.rid, r.rtype, str(r.result_count), r.result_item)
+        rc.print(t)
+        if truncated:
+            rc.print(f"[dim]…more matches hidden — refine the query or raise -n (showing {a.n})[/dim]")
+        return 0
+    if sub == "show":
+        rec = crafting.get_recipe(ctx.t, ctx.cfg, a.id)
+        if a.json:
+            print(json.dumps(rec.to_dict(), indent=2))
+            return 0
+        rc.print(crafting.render_recipe(rec))
+        return 0
+    return 2
+
+
+def _render_plan(plan) -> None:
+    rec = plan.recipe
+    rc.print(f"[bold]{rec.rid}[/bold]  [dim]{rec.rtype}[/dim]  ->  "
+             f"{rec.result_count}x {rec.result_item}")
+    rc.print(f"source [bold]{plan.source}[/bold] -> receiver [bold]{plan.receiver}[/bold]"
+             + ("" if plan.online else "  [red](offline — inventory unreadable)[/red]"))
+    t = Table.grid(padding=(0, 2))
+    t.add_column(style="bold", justify="right")
+    t.add_column()
+    for ing in plan.ingredients:
+        opts = " / ".join(ing["options"])
+        have = "?" if ing["loose"] is None else str(ing["loose"])
+        extra = (f"  [dim](+{ing['stored']} in storage)[/dim]"
+                 if ing.get("stored") else "")
+        t.add_row(f"{ing['per_craft']}x", f"{opts}   [dim]have[/dim] {have}{extra}")
+    rc.print(t)
+    if plan.online:
+        rc.print(f"craftable now: [bold]{plan.craftable}[/bold]   "
+                 f"one-stack cap: {plan.cap}   "
+                 f"[green]would craft {plan.will_craft}[/green] "
+                 f"({plan.output_count}x {plan.output_item})")
+        if plan.will_craft == 0:
+            rc.print("[yellow]not enough materials — recipe shown & planned, not crafted[/yellow]")
+        elif plan.limited_by == "stack":
+            rc.print("[dim]limited by one output stack (hold/--max caps at a stack)[/dim]")
+
+
+def cmd_craft(ctx: Ctx) -> int:
+    from . import crafting
+    a = ctx.args
+    rec = crafting.get_recipe(ctx.t, ctx.cfg, a.id)
+    count = None if a.max else a.count          # None == hold-to-max
+    plan = crafting.plan_craft(ctx.console, ctx.cfg, rec, count=count,
+                               source=a.source or "", receiver=a.receiver or "")
+    if a.json and a.preview:
+        print(json.dumps(plan.to_dict(), indent=2))
+        return 0
+    _render_plan(plan)
+    if a.preview:
+        return 0
+    if not plan.online:
+        rc.print("[red]player is not online — can't craft[/red]")
+        return 1
+    if plan.will_craft <= 0:
+        return 1
+    what = f"{plan.output_count}x {plan.output_item} (consumes materials from {plan.source})"
+    if not _confirm(f"Craft {what}?", a.yes):
+        return 1
+    res = crafting.craft(ctx.console, ctx.cfg, rec, count=count,
+                         source=a.source or "", receiver=a.receiver or "")
+    if a.json:
+        print(json.dumps(res.to_dict(), indent=2))
+        return 0 if res.ok else 1
+    if res.ok:
+        rc.print(f"[green]crafted {res.crafted}x[/green] -> gave {res.output_count}x "
+                 f"{res.output_item} to {plan.receiver}")
+        if res.detail:
+            rc.print(f"[yellow]{res.detail}[/yellow]")
+    else:
+        rc.print(f"[red]craft failed:[/red] {res.detail}")
+    return 0 if res.ok else 1
+
+
 def cmd_config(ctx: Ctx) -> int:
     from . import modconfig as MC
     a = ctx.args
@@ -1262,6 +1361,31 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_mods)
 
+    sp = sub.add_parser("recipes", help="browse the pack's crafting recipes (from jars + datapacks)")
+    rsub = nested(sp, "recipes_cmd")
+    rs = rsub.add_parser("search", help="find recipes by id/output substring")
+    rs.add_argument("query", nargs="?", default="")
+    rs.add_argument("-n", type=int, default=60, help="max results")
+    rs.add_argument("--json", action="store_true")
+    rsh = rsub.add_parser("show", help="show one recipe (ingredients + grid)")
+    rsh.add_argument("id")
+    rsh.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_recipes, recipes_cmd=None, query="", n=60, json=False, id=None)
+
+    sp = sub.add_parser("craft",
+                        help="survival command-craft: consume materials, give the output")
+    sp.add_argument("id", help="recipe id, e.g. minecraft:chest")
+    cg = sp.add_mutually_exclusive_group()
+    cg.add_argument("--count", type=int, default=1, help="how many to craft (default 1)")
+    cg.add_argument("--max", action="store_true",
+                    help="craft the most your materials allow (capped at one output stack)")
+    sp.add_argument("--source", help="player whose inventory supplies materials (default: config)")
+    sp.add_argument("--receiver", help="player who gets the output (default: config)")
+    sp.add_argument("--preview", action="store_true", help="plan only — don't craft")
+    sp.add_argument("--json", action="store_true")
+    sp.add_argument("--yes", action="store_true")
+    sp.set_defaults(func=cmd_craft)
+
     sp = sub.add_parser("config", help="browse & edit mod config files under config/ (live-reload aware)")
     csub = nested(sp, "config_cmd")
     ct = csub.add_parser("tree", help="list config files (best-effort grouped by mod)")
@@ -1381,7 +1505,7 @@ def main(argv: list[str] | None = None) -> int:
             metrics.MetricsError, util.LockHeldError, PropError) as e:
         rc.print(f"[red]error:[/red] {e}")
         return 1
-    except (InspectError, ModsError, LlmError, ConfigEditError) as e:
+    except (InspectError, ModsError, LlmError, ConfigEditError, CraftError) as e:
         rc.print(f"[red]error:[/red] {e}")
         return 1
     finally:

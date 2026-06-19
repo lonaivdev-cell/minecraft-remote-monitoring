@@ -44,6 +44,8 @@ mcctl init  →  mcctl doctor  →  mcctl start  →  mcctl dash
 | `mcctl logs [-f] [crash]` | tail/follow `latest.log` (timestamps auto-converted to your `[ui].timezone`, default São Paulo); list/fetch crash reports (escape-sequence-sanitized) |
 | `mcctl inspect [SECTION] [--learn]` | deep OS/JVM introspection: process tree, /proc internals, every JVM thread, memory maps, fds, sockets, environment, jcmd flags/heap, host PSI — each section has a `--learn` walkthrough explaining what the kernel structures mean |
 | `mcctl mods` | list every mod with id/version/size, metadata read from inside each jar (NeoForge/Forge/Fabric descriptors) |
+| `mcctl recipes [search QUERY\|show ID]` | browse the pack's shaped/shapeless **crafting recipes**, read straight out of the mod jars + world datapacks (one server-side pass, like `mods`); shows ingredients, grid pattern and output |
+| `mcctl craft ID [--count N\|--max] [--source\|--receiver NAME] [--preview]` | survival **command-craft**: reads your live inventory, consumes the inputs (`/clear`) and grants the output (`/give`). `--max` makes the most your materials allow, capped at one output stack. Only ever consumes *loose* (accessible) inventory, so it can't dupe; `--preview` plans without crafting (see [the honest note below](#command-craft-adapting-pick-a-recipe-it-gets-made)) |
 | `mcctl config [tree\|get\|set\|edit]` | browse & edit the per-mod files under `config/` — `tree` lists them grouped by the owning mod (matched from the jars), `get` prints one, `edit` opens it in `$EDITOR` and re-uploads (TOML/JSON validated before write, atomic, timestamped `.bak`), `set` writes from a file/stdin; `--reload` runs `/reload`, `--restart` does a full apply. Saving relies on NeoForge's config file-watcher to live-reload mods that support it — startup/cached values still need a restart |
 | `mcctl ai [logs\|crash\|mods\|inspect\|ask\|chat]` | AI analysis & multi-turn chat, powered by **Claude or a local LLM via ollama** (`[llm].provider`): review logs, root-cause crash reports, explain what the mods do, teacher-mode walkthroughs, free-form questions, and an interactive `chat` session — all with live server context attached |
 | `mcctl stats` | local JSONL metrics history (TPS, MSPT, heap, RAM, players) |
@@ -213,6 +215,7 @@ src/mcctl/
 ├── postmortem.py deterministic "what went wrong": crash-report parsing (pure) + events/state assembly
 ├── inspector.py  deep OS/JVM introspection (/proc, threads, maps, fds, jcmd) + learn-mode texts
 ├── mods.py       mod inventory — descriptors read from inside the jars, one round-trip
+├── crafting.py   recipe browser (jar+datapack scan, pure parsers) + survival command-craft engine
 ├── llm.py        AI analysis & chat: Anthropic + ollama backends, redaction, data envelopes, streaming
 ├── tracer.py     JVM GC tracer — jstat -gcutil parsing (pure) + one streaming round-trip
 ├── charts.py     terminal charting primitives (sparklines, block charts) — pure
@@ -254,6 +257,47 @@ mcctl agent --schema          # the versioned, machine-readable contract
   a capability granted in `agent.hello` and an explicit `"confirm": true`.
 - **Events:** `events.subscribe` streams watchdog heals/alerts as JSON-RPC
   notifications, backed by the same `events.jsonl` journal `mcctl events` tails.
+
+## Command-craft: "adapting *pick a recipe, it gets made*"
+
+The dream is to tap a recipe on your phone and have it auto-fill the crafting grid
+(holding to use every material, up to a stack). mcctl is a **server-ops tool** — it
+drives the server over RCON/console and does **not** run inside your game client, so
+it physically can't reach into your open crafting GUI to place items; that's a
+*client mod's* job (JEI/REI's recipe-transfer "+" button). What mcctl does instead is
+reproduce the **outcome** entirely through console commands:
+
+1. **Browse** — `mcctl recipes search <text>` / the phone's `recipes.search` reads
+   every shaped/shapeless crafting recipe out of the mod jars **and** the world
+   datapacks (same one-pass jar scan as `mcctl mods`), so you pick from what the pack
+   actually defines — no hand-maintained list.
+2. **Plan** — `mcctl craft <id> --preview` probes your *live* inventory (`/clear … 0`
+   only counts, never removes) and tells you how many you can make right now and
+   what's the limiting ingredient. Tags like `#minecraft:planks` are handled natively
+   (the count/consume predicate accepts them, just like the grid would).
+3. **Craft** — `mcctl craft <id>` consumes the inputs (`/clear`) and grants the output
+   (`/give`). `--max` (the phone's **hold-to-craft >3s** gesture) makes the most your
+   materials allow, capped at one output stack — *"the biggest amount, limited to that
+   stack"*.
+
+It works the same whether you're at a crafting table **or** a Backpacked crafting
+backpack, because it never depends on the GUI — you just have to be online.
+
+**Survival-honest, by construction:**
+- `/clear` only ever touches **loose** inventory slots, so we can only consume what
+  you actually, accessibly have — there's no way to dupe, and a recipe is only made
+  if the materials are really there (otherwise it's shown and planned, not crafted).
+- Items nested **inside** a backpack/shulker can't be removed by `/clear`, so they're
+  never auto-consumed. With `[crafting].include_containers` on, the planner still
+  *shows* them as "+N in storage" so you know to pull them out first.
+- Set `[crafting].player` to your IGN (default `GLEYSSON`); `source_player` lets a
+  shared **storage** account supply the materials while your player receives the
+  output (`--source` / `--receiver` override per-craft). Configured player names and
+  item predicates are charset-validated before they ever reach a console command.
+
+> The phone screen that renders this (a recipe picker + a press-and-hold craft
+> button wired to `craft.preview` / `craft.do`) is the next slice — the server-side
+> brain and the JSON-RPC contract it renders over shipped here. See **[TODO.md](TODO.md)**.
 
 ## Off-box: push & metrics
 

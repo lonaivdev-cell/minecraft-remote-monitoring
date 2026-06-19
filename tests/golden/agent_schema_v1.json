@@ -117,6 +117,29 @@
       },
       "summary": "List config/ files (size/mtime/format, best-effort owning mod)."
     },
+    "craft.do": {
+      "capability": "actions",
+      "destructive": true,
+      "params": {
+        "count": "int|null",
+        "id": "str",
+        "receiver": "str",
+        "source": "str"
+      },
+      "summary": "Craft for real: consume inputs (/clear) + grant output (/give). count=null = hold-to-max (one stack)."
+    },
+    "craft.preview": {
+      "capability": null,
+      "destructive": false,
+      "params": {
+        "count": "int|null",
+        "id": "str",
+        "include_stored": "bool",
+        "receiver": "str",
+        "source": "str"
+      },
+      "summary": "Plan a craft against live inventory (count=null = hold-to-max). No mutation."
+    },
     "events.list": {
       "capability": null,
       "destructive": false,
@@ -293,6 +316,23 @@
       "params": {},
       "summary": "jcmd GC.run with a garbage-vs-leak verdict."
     },
+    "recipes.get": {
+      "capability": null,
+      "destructive": false,
+      "params": {
+        "id": "str"
+      },
+      "summary": "One crafting recipe by id (e.g. \"minecraft:chest\")."
+    },
+    "recipes.search": {
+      "capability": null,
+      "destructive": false,
+      "params": {
+        "limit": "int",
+        "query": "str"
+      },
+      "summary": "Search shaped/shapeless crafting recipes from the mod jars + datapacks."
+    },
     "restart": {
       "capability": "actions",
       "destructive": false,
@@ -421,6 +461,13 @@
       "min_free_gb": "float",
       "prefix": "str",
       "remote_dir": "str"
+    },
+    "config.crafting": {
+      "hold_ms": "int",
+      "include_containers": "bool",
+      "max_output_stack": "int",
+      "player": "str",
+      "source_player": "str"
     },
     "config.llm": {
       "api_key_env": "str",

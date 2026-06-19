@@ -28,8 +28,9 @@ from typing import IO, Any
 
 from . import __version__, events, logs, metrics, state, util
 from .backup import BackupEntry, BackupError, BackupManager
-from .config import BackupCfg, LlmCfg, MetricsCfg, ServerCfg, UiCfg, WatchdogCfg
+from .config import BackupCfg, CraftingCfg, LlmCfg, MetricsCfg, ServerCfg, UiCfg, WatchdogCfg
 from .console import ConsoleError
+from .crafting import CraftError
 from .modconfig import ConfigFile as _ConfigFile
 from .players import PlayerError, Players
 from .props import PropError
@@ -145,7 +146,7 @@ class AgentServer:
         except TransportError as e:
             return self._err(rid, APP_ERROR, str(e), {"exit_code": 3})
         except (ServerError, BackupError, ConsoleError, SparkError, PlayerError,
-                PropError, metrics.MetricsError, util.LockHeldError) as e:
+                PropError, CraftError, metrics.MetricsError, util.LockHeldError) as e:
             return self._err(rid, APP_ERROR, str(e), {"exit_code": 1})
         except Exception as e:  # noqa: BLE001 - the agent must answer, never die mid-request
             log.exception("internal error handling %s", name)
@@ -508,6 +509,58 @@ def _mods_list(srv: AgentServer, params: dict) -> dict:
     return {"mods": [m.to_dict() for m in M.list_mods(srv.ctx.t, srv.ctx.cfg)]}
 
 
+@method("recipes.search", params={"query": "str", "limit": "int"},
+        summary="Search shaped/shapeless crafting recipes from the mod jars + datapacks.")
+def _recipes_search(srv: AgentServer, params: dict) -> dict:
+    from . import crafting
+    recipes, truncated = crafting.search_recipes(
+        srv.ctx.t, srv.ctx.cfg, query=str(params.get("query", "")),
+        limit=int(params.get("limit", 60)))
+    return {"recipes": [r.to_dict() for r in recipes], "truncated": truncated}
+
+
+@method("recipes.get", params={"id": "str"},
+        summary="One crafting recipe by id (e.g. \"minecraft:chest\").")
+def _recipes_get(srv: AgentServer, params: dict) -> dict:
+    from . import crafting
+    rid = params.get("id", "")
+    if not isinstance(rid, str) or not rid.strip():
+        raise RpcError(INVALID_PARAMS, "id must be a non-empty string")
+    return {"recipe": crafting.get_recipe(srv.ctx.t, srv.ctx.cfg, rid).to_dict()}
+
+
+@method("craft.preview",
+        params={"id": "str", "count": "int|null", "source": "str", "receiver": "str",
+                "include_stored": "bool"},
+        summary="Plan a craft against live inventory (count=null = hold-to-max). No mutation.")
+def _craft_preview(srv: AgentServer, params: dict) -> dict:
+    from . import crafting
+    rec = crafting.get_recipe(srv.ctx.t, srv.ctx.cfg, params["id"])
+    count = params.get("count", 1)
+    plan = crafting.plan_craft(
+        srv.ctx.console, srv.ctx.cfg, rec,
+        count=None if count is None else int(count),
+        source=params.get("source", ""), receiver=params.get("receiver", ""),
+        include_stored=params.get("include_stored"))
+    return plan.to_dict()
+
+
+@method("craft.do",
+        params={"id": "str", "count": "int|null", "source": "str", "receiver": "str"},
+        summary="Craft for real: consume inputs (/clear) + grant output (/give). "
+                "count=null = hold-to-max (one stack).",
+        capability="actions", destructive=True)
+def _craft_do(srv: AgentServer, params: dict) -> dict:
+    from . import crafting
+    rec = crafting.get_recipe(srv.ctx.t, srv.ctx.cfg, params["id"])
+    count = params.get("count", 1)
+    res = crafting.craft(
+        srv.ctx.console, srv.ctx.cfg, rec,
+        count=None if count is None else int(count),
+        source=params.get("source", ""), receiver=params.get("receiver", ""))
+    return res.to_dict()
+
+
 @method("config.tree", params={"mods": "bool"},
         summary="List config/ files (size/mtime/format, best-effort owning mod).")
 def _config_tree(srv: AgentServer, params: dict) -> dict:
@@ -639,6 +692,7 @@ def build_schema() -> dict:
         "config.metrics": _dataclass_types(MetricsCfg),
         "config.llm": _dataclass_types(LlmCfg),
         "config.ui": _dataclass_types(UiCfg),
+        "config.crafting": _dataclass_types(CraftingCfg),
     }
     return {
         "protocol": AGENT_PROTOCOL,

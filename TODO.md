@@ -92,6 +92,24 @@ and route intent ops through it; `ALERT_SSH` ("box down") must be detected from
       push is the remaining piece.
 - [ ] AI screen: wire `mcctl ai`-style analysis (currently a deliberate placeholder).
 
+### Phase 2.5 — recipe browser + command-craft  → **brain shipped**
+The "pick a recipe on my phone and have it crafted" ask. mcctl can't reach the
+client's crafting GUI (that's a client mod), so the *outcome* is reproduced over the
+console — browse recipes from the jars+datapacks, then consume inputs (`/clear`) and
+grant output (`/give`), loose-inventory-only so it stays survival-honest.
+- [x] `crafting.py`: jar+datapack recipe scan (pure parsers, tested), live-inventory
+      plan, and a survival-safe craft engine (anti-dupe: never grants more than it
+      removed). `[crafting]` config — player/source_player/receiver, one-stack cap.
+- [x] CLI: `mcctl recipes search|show`, `mcctl craft <id> [--count|--max] [--preview]`.
+- [x] Agent contract: `recipes.search`, `recipes.get`, `craft.preview`, `craft.do`
+      (actions + confirm gated), golden-schema regenerated.
+- [ ] **Android screen (the renderer):** recipe picker (search → ingredients/grid),
+      a **press-and-hold (>3s) craft button** → `craft.do {count:null}` (hold-to-max)
+      vs tap → `count:1`, biometric gate like other actions. `[crafting].hold_ms` is
+      the contract value to honor.
+- [ ] Tag display: resolve `#tag` predicates to concrete items for nicer ingredient
+      lists (counting/consuming already handle tags natively via the `/clear` predicate).
+
 ### Phase 3 — polish
 - [ ] spark profiler launcher with result URL → in-app browser.
 - [ ] TPS/heap history charts from `metrics.jsonl` (synced over the RPC).

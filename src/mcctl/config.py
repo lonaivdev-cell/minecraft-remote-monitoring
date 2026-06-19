@@ -100,6 +100,16 @@ class LlmCfg:
 
 
 @dataclass(slots=True)
+class CraftingCfg:
+    # Recipe browser + survival "command-craft" (`mcctl craft`, agent craft.* methods).
+    player: str = "GLEYSSON"                # default crafted-output receiver (your IGN)
+    source_player: str = ""                 # whose inventory supplies materials ("" = player)
+    max_output_stack: int = 64              # hold-to-craft-max cap: one output stack
+    include_containers: bool = True         # also *show* backpack/container counts (never consumed)
+    hold_ms: int = 3000                     # UI contract: hold this long = craft-max
+
+
+@dataclass(slots=True)
 class UiCfg:
     # Log timestamps are shown in this zone; the server writes them in server_timezone.
     # Defaults convert a UTC OCI box's logs to São Paulo wall-clock for easy reading.
@@ -115,6 +125,7 @@ class Config:
     metrics: MetricsCfg = field(default_factory=MetricsCfg)
     llm: LlmCfg = field(default_factory=LlmCfg)
     ui: UiCfg = field(default_factory=UiCfg)
+    crafting: CraftingCfg = field(default_factory=CraftingCfg)
     path: Path | None = None
 
     # ---------------------------------------------------------------- load
@@ -138,7 +149,7 @@ class Config:
             raise ConfigError(f"cannot read {p}: {e}") from e
         for section, dc in (("server", cfg.server), ("backup", cfg.backup),
                             ("watchdog", cfg.watchdog), ("metrics", cfg.metrics),
-                            ("llm", cfg.llm), ("ui", cfg.ui)):
+                            ("llm", cfg.llm), ("ui", cfg.ui), ("crafting", cfg.crafting)):
             data = raw.get(section, {})
             if not isinstance(data, dict):
                 raise ConfigError(f"[{section}] must be a table")
@@ -149,7 +160,7 @@ class Config:
                     continue
                 setattr(dc, k, v)
         for section in raw:
-            if section not in ("server", "backup", "watchdog", "metrics", "llm", "ui"):
+            if section not in ("server", "backup", "watchdog", "metrics", "llm", "ui", "crafting"):
                 log.warning("config: unknown section [%s] ignored", section)
         cfg.validate()
         return cfg
@@ -194,6 +205,16 @@ class Config:
             problems.append("llm.log_lines must be >= 10")
         if llm.provider == "ollama" and not llm.ollama_model:
             problems.append("llm.ollama_model must not be empty when provider = 'ollama'")
+        import re as _re
+        cr = self.crafting
+        if not _re.match(r"^[A-Za-z0-9_]{1,16}$", cr.player):
+            problems.append("crafting.player must be a valid Minecraft name (1-16 of A-Z a-z 0-9 _)")
+        if cr.source_player and not _re.match(r"^[A-Za-z0-9_]{1,16}$", cr.source_player):
+            problems.append("crafting.source_player must be empty or a valid Minecraft name")
+        if not (1 <= cr.max_output_stack <= 64):
+            problems.append("crafting.max_output_stack must be in [1, 64]")
+        if cr.hold_ms < 0:
+            problems.append("crafting.hold_ms must be >= 0")
         from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
         for key, tz in (("ui.timezone", self.ui.timezone),
                         ("ui.server_timezone", self.ui.server_timezone)):
@@ -208,7 +229,8 @@ class Config:
     def to_dict(self) -> dict:
         return {"server": asdict(self.server), "backup": asdict(self.backup),
                 "watchdog": asdict(self.watchdog), "metrics": asdict(self.metrics),
-                "llm": asdict(self.llm), "ui": asdict(self.ui)}
+                "llm": asdict(self.llm), "ui": asdict(self.ui),
+                "crafting": asdict(self.crafting)}
 
     # ---------------------------------------------------------------- save
 
@@ -224,7 +246,7 @@ class Config:
         p = Path(path) if path else (self.path or self.default_path())
         sections = (("server", self.server), ("backup", self.backup),
                     ("watchdog", self.watchdog), ("metrics", self.metrics),
-                    ("llm", self.llm), ("ui", self.ui))
+                    ("llm", self.llm), ("ui", self.ui), ("crafting", self.crafting))
         lines = ["# mcctl configuration — Minecraft remote control & monitoring",
                  "# Managed by `mcctl init` and the GUI Settings tab; hand-editing is fine too.",
                  ""]
@@ -256,6 +278,7 @@ _SECTION_DOC = {
     "metrics": "Prometheus textfile exporter (node_exporter/Grafana).",
     "llm": "AI analysis & chat — provider='anthropic' (Claude) or 'ollama' (local).",
     "ui": "Display preferences (log timestamp timezones).",
+    "crafting": "Recipe browser + survival command-craft (`mcctl craft`, phone craft.* methods).",
 }
 
 _KEY_DOC = {
@@ -269,6 +292,10 @@ _KEY_DOC = {
     "ollama_model": "Model name as `ollama pull`ed it (pick from `ollama list`).",
     "ntfy_topic": "ntfy push topic (also a UnifiedPush distributor); empty disables push.",
     "timezone": 'Display zone for log timestamps (IANA name, or "" to show raw server time).',
+    "player": "Your in-game name — the default receiver of crafted output.",
+    "source_player": 'Whose inventory supplies the materials (empty = same as player).',
+    "max_output_stack": "Hold-to-craft-max cap: the largest output, limited to one stack (1-64).",
+    "include_containers": "Also show backpack/container counts when planning (never consumed).",
 }
 
 
@@ -376,6 +403,24 @@ ollama_model = "llama3.1"
 # to "" to show raw server time. Defaults: UTC server -> São Paulo (UTC-3).
 timezone = "America/Sao_Paulo"
 server_timezone = "UTC"
+
+[crafting]
+# Recipe browser + survival "command-craft" (`mcctl craft`, the phone's craft.* RPCs).
+# mcctl can't reach your client's crafting grid, so instead it reproduces the outcome:
+# it reads your inventory, consumes the inputs with /clear, and grants the output with
+# /give — only ever from loose (accessible) inventory, so it stays survival-honest.
+# player    = your in-game name; the default receiver of the crafted output.
+player = "GLEYSSON"
+# source_player = whose inventory supplies the materials. Empty = same as `player`.
+# Set this to craft FROM a shared storage account's inventory INTO `player`.
+source_player = ""
+# Hold-to-craft-max caps the output at one stack of this size (1-64).
+max_output_stack = 64
+# Also show backpack/container contents when planning a craft (informational only —
+# items nested in a backpack can't be auto-consumed by /clear, so they're never used).
+include_containers = true
+# UI contract: holding the craft button this many ms triggers craft-max.
+hold_ms = 3000
 """
 
 
