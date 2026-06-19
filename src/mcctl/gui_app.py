@@ -27,7 +27,7 @@ gi.require_version("Adw", "1")
 
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
-from . import __version__, inspector, llm, logs, metrics, modconfig, mods, state, util  # noqa: E402
+from . import __version__, crafting, inspector, llm, logs, metrics, modconfig, mods, state, util  # noqa: E402
 from . import props as propsmod  # noqa: E402
 from .backup import BackupManager  # noqa: E402
 from .config import Config, ConfigError  # noqa: E402
@@ -168,6 +168,9 @@ class Window(Adw.ApplicationWindow):
         self._cfg_file_rows: list[Gtk.Widget] = []
         self._cfg_loaded = False
         self._cfg_loading = False
+        self._recipe_rows: list[Gtk.Widget] = []       # crafting page state
+        self._recipes: list = []
+        self._recipes_searching = False
         self._inspect_refreshing = False
         self._ai_running = False
         self._doctor_rows: list[Gtk.Widget] = []
@@ -210,7 +213,7 @@ class Window(Adw.ApplicationWindow):
     # ------------------------------------------------------------------ UI
 
     def _build_ui(self) -> None:
-        # 17 pages: a sidebar scales where a view switcher can't
+        # 19 pages: a sidebar scales where a view switcher can't
         self.stack = Gtk.Stack(vexpand=True, hexpand=True,
                                transition_type=Gtk.StackTransitionType.CROSSFADE)
         for builder, name, title in (
@@ -222,6 +225,7 @@ class Window(Adw.ApplicationWindow):
             (self._build_backups, "backups", "Backups"),
             (self._build_mods, "mods", "Mods"),
             (self._build_mod_configs, "modconfig", "Mod Configs"),
+            (self._build_craft, "craft", "Crafting"),
             (self._build_inspect, "inspect", "Inspect"),
             (self._build_ai, "ai", "AI"),
             (self._build_chat, "chat", "Chat"),
@@ -437,6 +441,36 @@ class Window(Adw.ApplicationWindow):
 
         self.cfg_files_group = Adw.PreferencesGroup(title="Files")
         box.append(self.cfg_files_group)
+        return Gtk.ScrolledWindow(child=Adw.Clamp(maximum_size=900, child=box),
+                                  hscrollbar_policy=Gtk.PolicyType.NEVER)
+
+    def _build_craft(self) -> Gtk.Widget:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18,
+                      margin_top=24, margin_bottom=24, margin_start=12, margin_end=12)
+
+        search = Adw.PreferencesGroup(
+            title="Crafting",
+            description="Pick a recipe and have it crafted for you. mcctl can't reach your "
+                        "in-game crafting grid, so it reproduces the result over the console: it "
+                        "reads your inventory, consumes the inputs and gives you the output — only "
+                        "ever from loose (accessible) inventory, so it can't dupe. Works at a "
+                        "crafting table or a Backpacked crafting backpack.")
+        self.craft_search = Gtk.SearchEntry(
+            placeholder_text="Search recipes by id or output, e.g. chest, iron, torch…",
+            hexpand=True)
+        self.craft_search.connect("activate", lambda *_: self._refresh_recipes())
+        srow = Adw.ActionRow(title="Find a recipe")
+        srow.add_suffix(self.craft_search)
+        go = Gtk.Button(label="Search", valign=Gtk.Align.CENTER)
+        go.add_css_class("suggested-action")
+        go.connect("clicked", lambda *_: self._refresh_recipes())
+        srow.add_suffix(go)
+        search.add(srow)
+        box.append(search)
+
+        self.recipes_group = Adw.PreferencesGroup(
+            title="Recipes", description="Search to list the pack's shaped/shapeless recipes.")
+        box.append(self.recipes_group)
         return Gtk.ScrolledWindow(child=Adw.Clamp(maximum_size=900, child=box),
                                   hscrollbar_policy=Gtk.PolicyType.NEVER)
 
@@ -799,6 +833,18 @@ class Window(Adw.ApplicationWindow):
         choose.add_css_class("flat")
         choose.connect("clicked", self._on_ollama_choose)
         ollama_row.add_suffix(choose)
+        box.append(g)
+
+        g = Adw.PreferencesGroup(
+            title="Crafting",
+            description="Recipe browser + survival command-craft (the Crafting page).")
+        self._add_field(g, "crafting", "player", "text", "Your in-game name",
+                        "Default receiver of crafted output, e.g. GLEYSSON")
+        self._add_field(g, "crafting", "source_player", "text", "Source player (optional)",
+                        "Whose inventory supplies materials; empty = same as your name")
+        self._add_field(g, "crafting", "max_output_stack", "int", "Craft-max stack cap (1-64)")
+        self._add_field(g, "crafting", "include_containers", "bool",
+                        "Show backpack/container counts when planning")
         box.append(g)
 
         g = Adw.PreferencesGroup(title="Metrics and display")
@@ -1537,6 +1583,194 @@ class Window(Adw.ApplicationWindow):
             "A graceful restart (warn players → save → stop → start) guarantees every config "
             "change is loaded, including startup and cached values.",
             "Restart", go)
+
+    # ------------------------------------------------------------- crafting
+
+    def _refresh_recipes(self) -> None:
+        if self._recipes_searching:
+            return
+        query = self.craft_search.get_text().strip()
+        self._recipes_searching = True
+        self.recipes_group.set_description("Scanning recipes in the jars + datapacks…")
+
+        def done(res):
+            recipes, truncated = res
+            self._recipes_searching = False
+            self._recipes = recipes
+            if not recipes:
+                self.recipes_group.set_description(
+                    f"No crafting recipes match {query!r}." if query
+                    else "Type something to search, then press Search.")
+            else:
+                more = " · more hidden, refine the search" if truncated else ""
+                self.recipes_group.set_description(f"{len(recipes)} recipe(s){more}")
+            self._recipe_rows = self._swap_rows(
+                self.recipes_group, self._recipe_rows, [self._recipe_row(r) for r in recipes])
+
+        def err(e: Exception):
+            self._recipes_searching = False
+            self.recipes_group.set_description(str(e)[:160])
+
+        self.worker.submit(
+            lambda: crafting.search_recipes(self.remote.t, self.remote.cfg, query=query, limit=80),
+            done, err)
+
+    def _recipe_row(self, rec) -> Adw.ActionRow:
+        sub = " · ".join((rec.rid, rec.rtype, rec.source))
+        row = Adw.ActionRow(title=f"{rec.result_count}× {rec.result_item}", subtitle=sub)
+        btn = Gtk.Button(label="Craft…", valign=Gtk.Align.CENTER)
+        btn.add_css_class("suggested-action")
+        btn.connect("clicked", lambda *_: self._craft_open(rec))
+        row.add_suffix(btn)
+        row.set_activatable_widget(btn)
+        return row
+
+    def _craft_open(self, rec) -> None:
+        """A craft dialog: live ingredient counts + tap-to-craft / hold-to-max."""
+        cr = self.remote.cfg.crafting
+        win = Adw.Window(title=f"Craft {rec.result_item}", transient_for=self,
+                         default_width=560, default_height=620)
+        header = Adw.HeaderBar()
+        busy = {"v": False}  # guards double-submits from this dialog
+
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14,
+                       margin_top=16, margin_bottom=16, margin_start=16, margin_end=16)
+
+        title = Gtk.Label(label=f"{rec.rtype} · makes {rec.result_count}× {rec.result_item}",
+                          xalign=0, wrap=True)
+        title.add_css_class("title-4")
+        body.append(title)
+        if rec.pattern:
+            grid = Gtk.Label(label="\n".join("│ " + r + " │" for r in rec.pattern), xalign=0)
+            grid.add_css_class("dim-label")
+            grid.add_css_class("monospace")
+            body.append(grid)
+
+        who = Adw.PreferencesGroup(
+            title="Players",
+            description="Source supplies the materials; receiver gets the output "
+                        "(blank = your configured defaults).")
+        src_row = Adw.EntryRow(title="Source")
+        src_row.set_text(cr.source_player or cr.player)
+        rcv_row = Adw.EntryRow(title="Receiver")
+        rcv_row.set_text(cr.player)
+        who.add(src_row)
+        who.add(rcv_row)
+        body.append(who)
+
+        ing_group = Adw.PreferencesGroup(title="Ingredients", description="Preview to read your inventory.")
+        ing_rows: list[Gtk.Widget] = []
+        body.append(ing_group)
+
+        status = Gtk.Label(xalign=0, wrap=True)
+        status.add_css_class("dim-label")
+        body.append(status)
+
+        controls = Gtk.Box(spacing=8)
+        count_adj = Gtk.Adjustment(value=1, lower=1, upper=cr.max_output_stack, step_increment=1)
+        count_spin = Gtk.SpinButton(adjustment=count_adj, numeric=True, valign=Gtk.Align.CENTER)
+        controls.append(Gtk.Label(label="Count:"))
+        controls.append(count_spin)
+        preview_btn = Gtk.Button(label="Preview")
+        preview_btn.connect("clicked", lambda *_: do_preview())
+        controls.append(preview_btn)
+        craft_btn = Gtk.Button(label="Craft")
+        craft_btn.add_css_class("suggested-action")
+        craft_btn.set_sensitive(False)
+        controls.append(craft_btn)
+        max_btn = Gtk.Button(
+            label="Craft max", tooltip_text="The phone's hold-to-craft (>3s) gesture: make the "
+                                            "most your materials allow, capped at one output stack.")
+        max_btn.set_sensitive(False)
+        controls.append(max_btn)
+        body.append(controls)
+
+        # mutable holder so the craft buttons reuse the latest preview's player names
+        plan_box = {"plan": None}
+
+        def render_plan(plan):
+            nonlocal ing_rows
+            plan_box["plan"] = plan
+            rows = []
+            for ing in plan.ingredients:
+                opts = " / ".join(ing["options"])
+                have = "?" if ing["loose"] is None else str(ing["loose"])
+                extra = f"  (+{ing['stored']} in storage)" if ing.get("stored") else ""
+                rows.append(Adw.ActionRow(title=f"{ing['per_craft']}× {opts}",
+                                          subtitle=f"have {have}{extra}"))
+            ing_rows = self._swap_rows(ing_group, ing_rows, rows)
+            if not plan.online:
+                status.set_label("Source player is offline — can't read their inventory. "
+                                 "The recipe is shown and planned, not crafted.")
+                craft_btn.set_sensitive(False)
+                max_btn.set_sensitive(False)
+                return
+            count_adj.set_upper(max(1, plan.cap))
+            status.set_label(
+                f"Craftable now: {plan.craftable}  ·  one-stack cap: {plan.cap}.  "
+                + ("Not enough materials yet." if plan.craftable == 0
+                   else f"Craft makes up to {plan.cap}× per click; Craft max makes {min(plan.craftable, plan.cap)}."))
+            craft_btn.set_sensitive(plan.craftable > 0)
+            max_btn.set_sensitive(plan.craftable > 0)
+
+        def run_dialog(job, on_done):
+            if busy["v"]:
+                return
+            busy["v"] = True
+            status.set_label("Working…")
+
+            def done(res):
+                busy["v"] = False
+                on_done(res)
+
+            def err(e):
+                busy["v"] = False
+                status.set_label(f"Error: {e}")
+                self._toast(f"Error: {e}", timeout=8)
+
+            self.worker.submit(job, done, err)
+
+        def do_preview(count=1):
+            src, rcv = src_row.get_text().strip(), rcv_row.get_text().strip()
+            run_dialog(
+                lambda: crafting.plan_craft(self.remote.console, self.remote.cfg, rec,
+                                            count=count, source=src, receiver=rcv),
+                render_plan)
+
+        def do_craft(count):
+            plan = plan_box["plan"]
+            src, rcv = src_row.get_text().strip(), rcv_row.get_text().strip()
+            n = plan.will_craft if (plan and count is None) else (count or 1)
+            out = (plan.recipe.result_count * n) if plan else rec.result_count * n
+            self._confirm(
+                f"Craft {out}× {rec.result_item}?",
+                f"This consumes the materials from {src or cr.player}'s loose inventory and gives "
+                f"the output to {rcv or cr.player}. This can't be undone.",
+                "Craft",
+                lambda: run_dialog(
+                    lambda: crafting.craft(self.remote.console, self.remote.cfg, rec,
+                                           count=count, source=src, receiver=rcv),
+                    on_crafted))
+
+        def on_crafted(res):
+            if res.ok:
+                msg = f"Crafted {res.crafted}× — gave {res.output_count}× {res.output_item}"
+                if res.detail:
+                    msg += f" ({res.detail})"
+                self._toast(msg, timeout=6)
+                status.set_label(msg)
+            else:
+                status.set_label(f"Craft failed: {res.detail}")
+            do_preview(int(count_spin.get_value()))  # refresh the counts after crafting
+
+        craft_btn.connect("clicked", lambda *_: do_craft(int(count_spin.get_value())))
+        max_btn.connect("clicked", lambda *_: do_craft(None))
+
+        tv = Adw.ToolbarView(content=Gtk.ScrolledWindow(child=body, vexpand=True))
+        tv.add_top_bar(header)
+        win.set_content(tv)
+        win.present()
+        do_preview()  # probe inventory as soon as the dialog opens
 
     def _refresh_inspect(self) -> None:
         if self._inspect_refreshing:
