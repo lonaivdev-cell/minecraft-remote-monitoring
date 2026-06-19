@@ -347,7 +347,12 @@ cd android && ./gradlew :core:test        # protocol layer — no Android SDK ne
 cd android && ./gradlew :app:assembleDebug # the APK (needs the Android SDK)
 ```
 
-CI builds the APK on every push and uploads it as the `mcctl-debug-apk` artifact.
+CI (`android.yml`) builds the APK on every push/PR that touches `android/**` and uploads
+it as the `mcctl-debug-apk` artifact. To ship an installable build, push a `v*` tag (or run
+the **release** workflow manually): it publishes a GitHub Release with the APK attached, which
+[Obtainium](https://github.com/ImranR98/Obtainium) installs and auto-updates — see
+[CLAUDE.md](CLAUDE.md#cutting-an-android-release--obtainium) and
+[android/README.md](android/README.md#releasing--installing-via-obtainium).
 
 > **Phase 0 (the server-side API) shipped in 0.5.0:** `mcctl agent` is the
 > JSON-RPC contract the app renders over, the `events.jsonl` journal +
