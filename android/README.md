@@ -84,6 +84,36 @@ cd android
 `settings.gradle.kts` includes `:app` only when an Android SDK is configured (via
 `ANDROID_HOME` or `local.properties`), so `:core` builds cleanly on a box without one.
 
+## Releasing & installing via Obtainium
+
+Two workflows drive the phone build (full pipeline reference: **[CLAUDE.md](../CLAUDE.md)**):
+
+- **`.github/workflows/android.yml`** — on every push/PR that touches `android/**`, runs
+  the `:core` tests, builds the debug APK, and uploads it as the **`mcctl-debug-apk`**
+  artifact. This is CI verification, not a release.
+- **`.github/workflows/release.yml`** — cuts an installable release. Trigger it either way:
+
+  ```bash
+  # tag push:
+  git tag v0.7.0 && git push origin v0.7.0
+  ```
+
+  …or from the **Actions → release → Run workflow** button, typing the version (`v0.7.0`).
+  It derives `versionName`/`versionCode` from the tag, builds the APK (signed if the
+  keystore secrets are set, otherwise the debug-signed APK), names it
+  `mcctl-android-v0.7.0.apk`, and publishes a **GitHub Release** with the APK attached.
+
+**Install with [Obtainium](https://github.com/ImranR98/Obtainium):** add an app, paste the
+repo URL `https://github.com/lonaivdev-cell/minecraft-remote-monitoring`, and Obtainium
+tracks the Releases page and offers each new tag as an update.
+
+> **versionCode must increase every release** (the workflow computes it as
+> `major*10000 + minor*100 + patch`), and you must **stay on one track** — the debug
+> fallback uses an `applicationId` of `…mcctl.debug`, so Android won't upgrade between a
+> debug-track APK and a signed-release-track one. Set the keystore secrets
+> (`KEYSTORE_BASE64`, `KEYSTORE_STORE_PASSWORD`, `KEYSTORE_KEY_ALIAS`,
+> `KEYSTORE_KEY_PASSWORD`) once and stay on the signed track.
+
 ## First run
 
 1. Open the app → **Connection**. It shows this device's public key.
