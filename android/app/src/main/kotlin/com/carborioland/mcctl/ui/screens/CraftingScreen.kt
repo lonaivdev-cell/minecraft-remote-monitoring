@@ -47,6 +47,7 @@ import com.carborioland.mcctl.ui.components.KeyValue
 import com.carborioland.mcctl.ui.components.McButton
 import com.carborioland.mcctl.ui.components.McPanel
 import com.carborioland.mcctl.ui.components.McTextField
+import com.carborioland.mcctl.ui.components.RecipeView
 import com.carborioland.mcctl.ui.components.SectionLabel
 import com.carborioland.mcctl.ui.components.UiState
 import com.carborioland.mcctl.ui.components.pixelBevel
@@ -149,19 +150,7 @@ internal fun RecipeDetail(container: AppContainer, recipe: Recipe, onBack: () ->
             Text(pretty, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
         }
 
-        McPanel {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Makes", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.mc.dim)
-                Text("${recipe.resultCount}× $pretty", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
-            }
-            KeyValue("Recipe", recipe.id)
-            KeyValue("Type", recipe.type)
-            if (recipe.source.isNotBlank()) KeyValue("From", recipe.source)
-            if (recipe.shaped && recipe.pattern.isNotEmpty()) {
-                Spacer(Modifier.height(10.dp))
-                PatternGrid(recipe.pattern)
-            }
-        }
+        RecipeView(recipe, container.iconCache)
 
         McPanel {
             SectionLabel("Ingredients")

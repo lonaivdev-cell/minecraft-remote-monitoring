@@ -149,10 +149,15 @@ channel for the app to cache and render offline. Decided 2026-06-20:
       `IconCache` (app-scoped) batch-fetches `icons.fetch` PNGs and decodes them to
       `ImageBitmap`, drawn crisp with `FilterQuality.None` (no new dep); a "Get vanilla
       icons" button runs `assets.sync`. Registered in the nav drawer (Manage group).
-- [ ] **EMI polish — PR #5:** icons *inside* the recipe panel (result + ingredient
-      pictures, furnace-arrow for the cook family), full uses/making click-through (tap an
-      ingredient → what it makes / what uses it, over the cached recipe set), a persistent
-      on-disk icon cache for true offline, and a craftable-only filter.
+- [x] **EMI polish — PR #5:** the recipe panel is now a true EMI card — a positional
+      crafting grid of beveled slots with real icons (the brain gained `grid`/`grid_w`),
+      an arrow, the result slot with its count, and a furnace line (time + xp) for the cook
+      family. Full **what-makes / what-uses** click-through: an `ItemDetail` with Recipes/Uses
+      tabs, `RecipeStore` syncs the whole recipe set once and `RecipeIndex` (pure, tested in
+      `:core`) answers both, and tapping any ingredient pivots to that item. `IconCache` now
+      indexes item→texture+name and **persists PNGs on disk** for true offline.
+- [ ] **EMI extras (later):** a craftable-only filter, tag-ingredient cycling in slots,
+      and a recipe-tree cost breakdown (total base materials for a deep craft).
 - [x] **Vanilla icons — PR #2:** a server has no client `assets/` (mods carry their
       own), so `assets.py` now fetches the **matching Mojang client jar** and caches it
       where the scans look first (lowest priority — mods/resourcepacks still override).

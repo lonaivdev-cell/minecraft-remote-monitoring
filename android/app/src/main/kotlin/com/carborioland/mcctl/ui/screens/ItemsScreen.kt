@@ -10,11 +10,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -32,24 +32,31 @@ import com.carborioland.mcctl.core.model.Capability
 import com.carborioland.mcctl.core.model.ItemEntry
 import com.carborioland.mcctl.core.model.Recipe
 import com.carborioland.mcctl.di.AppContainer
+import com.carborioland.mcctl.ui.IconCache
 import com.carborioland.mcctl.ui.components.AsyncContent
 import com.carborioland.mcctl.ui.components.BtnKind
 import com.carborioland.mcctl.ui.components.EmptyHint
+import com.carborioland.mcctl.ui.components.ErrorPanel
 import com.carborioland.mcctl.ui.components.ItemIcon
+import com.carborioland.mcctl.ui.components.ItemSlot
+import com.carborioland.mcctl.ui.components.Loading
 import com.carborioland.mcctl.ui.components.McButton
 import com.carborioland.mcctl.ui.components.McPanel
 import com.carborioland.mcctl.ui.components.McTextField
+import com.carborioland.mcctl.ui.components.RecipeView
 import com.carborioland.mcctl.ui.components.SectionLabel
+import com.carborioland.mcctl.ui.components.prettyItem
 import com.carborioland.mcctl.ui.rememberActionRunner
 import com.carborioland.mcctl.ui.rememberRpcResource
 import com.carborioland.mcctl.ui.theme.mc
 
 /**
  * The EMI-style item browser (TODO Phase 2.6): every item the pack defines, drawn with its real
- * icon and searchable by name or id. Tap an item to see the recipes that make it. The icons come
- * from the brain's `items.manifest` (id → name → texture) + `icons.fetch` (PNG bytes), cached by
- * [com.carborioland.mcctl.ui.IconCache]; "Get vanilla icons" runs `assets.sync` so base-game items
- * gain icons too. This only renders — the Python core resolves and de-duplicates the assets.
+ * icon and searchable by name or id. Tap an item to open its detail — the recipes that **make** it
+ * and the recipes that **use** it, each rendered as a true EMI card (positional grid, furnace line,
+ * counts) — and tap any ingredient to pivot to *that* item. Icons + names come from the brain's
+ * `items.manifest`/`icons.fetch` (cached on disk by [IconCache]); "Get vanilla icons" runs
+ * `assets.sync`. This only renders; the Python core resolves and de-duplicates the assets.
  */
 @Composable
 fun ItemsScreen(container: AppContainer) {
@@ -62,7 +69,7 @@ fun ItemsScreen(container: AppContainer) {
 
     val sel = picked
     if (sel != null) {
-        ItemRecipes(container, sel, onBack = { picked = null })
+        ItemDetail(container, sel, onBack = { picked = null }, onPick = { id -> picked = entryFor(cache, id) })
         return
     }
 
@@ -100,7 +107,7 @@ fun ItemsScreen(container: AppContainer) {
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        items(manifest.items, key = { it.id }) { entry -> ItemCell(entry, cache) { picked = entry } }
+                        gridItems(manifest.items, key = { it.id }) { entry -> ItemCell(entry, cache) { picked = entry } }
                     }
                 }
             }
@@ -109,7 +116,7 @@ fun ItemsScreen(container: AppContainer) {
 }
 
 @Composable
-private fun ItemCell(entry: ItemEntry, cache: com.carborioland.mcctl.ui.IconCache, onClick: () -> Unit) {
+private fun ItemCell(entry: ItemEntry, cache: IconCache, onClick: () -> Unit) {
     McPanel(Modifier.clickable(onClick = onClick)) {
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
             ItemIcon(entry.icon, cache, size = 40.dp, fallbackLabel = entry.name)
@@ -122,47 +129,77 @@ private fun ItemCell(entry: ItemEntry, cache: com.carborioland.mcctl.ui.IconCach
     }
 }
 
-/** Tap-through from an item to the recipes that produce it, then into the full craft view. */
+/** An item's detail: header, a Recipes/Uses toggle, and EMI recipe cards you can pivot through. */
 @Composable
-private fun ItemRecipes(container: AppContainer, entry: ItemEntry, onBack: () -> Unit) {
-    var openRecipe by remember { mutableStateOf<Recipe?>(null) }
+private fun ItemDetail(container: AppContainer, entry: ItemEntry, onBack: () -> Unit, onPick: (String) -> Unit) {
+    var tab by remember(entry.id) { mutableStateOf(0) }       // 0 = Recipes (makes), 1 = Uses
+    val cache = container.iconCache
 
-    val open = openRecipe
-    if (open != null) {
-        RecipeDetail(container, open, onBack = { openRecipe = null })
-        return
-    }
-
-    val res = rememberRpcResource(container, key = entry.id) { it.recipesSearch(entry.id, 80) }
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            McButton("‹ Back", kind = BtnKind.Neutral, onClick = onBack)
-            Spacer(Modifier.width(10.dp))
-            ItemIcon(entry.icon, container.iconCache, size = 28.dp, fallbackLabel = entry.name)
-            Spacer(Modifier.width(8.dp))
-            Text(
-                entry.name, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
-            )
-        }
-        AsyncContent(res.state, onRetry = res.reload) { search ->
-            val makes = search.recipes.filter { it.resultItem == entry.id }
-            if (makes.isEmpty()) {
-                EmptyHint("No recipe makes ${entry.name}. It may be a base resource, a mob drop, or made in a machine the browser doesn't cover yet.")
-            } else {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        "${makes.size} recipe(s) make this", style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.mc.grassLight,
-                    )
-                    makes.forEach { r -> RecipeRow(r) { openRecipe = r } }
+    Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        McPanel {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                McButton("‹ Back", kind = BtnKind.Neutral, onClick = onBack)
+                Spacer(Modifier.width(10.dp))
+                ItemSlot(entry.id, cache, size = 44.dp)
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(entry.name, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(entry.id, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.mc.dim, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
+            }
+            Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                McButton("Recipes", kind = if (tab == 0) BtnKind.Primary else BtnKind.Neutral, modifier = Modifier.weight(1f), onClick = { tab = 0 })
+                McButton("Uses", kind = if (tab == 1) BtnKind.Primary else BtnKind.Neutral, modifier = Modifier.weight(1f), onClick = { tab = 1 })
+            }
+        }
+        if (tab == 0) MakesList(container, entry, onPick) else UsesList(container, entry, onPick)
+    }
+}
+
+@Composable
+private fun MakesList(container: AppContainer, entry: ItemEntry, onPick: (String) -> Unit) {
+    val res = rememberRpcResource(container, key = entry.id) { it.recipesSearch(entry.id, 100) }
+    AsyncContent(res.state, onRetry = res.reload) { search ->
+        val makes = search.recipes.filter { it.resultItem == entry.id }
+        if (makes.isEmpty()) {
+            EmptyHint("No recipe makes ${entry.name}. It may be a base resource, a mob drop, or made in a machine the browser doesn't cover yet.")
+        } else {
+            LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                items(makes) { r -> RecipeView(r, container.iconCache, onPickItem = onPick) }
             }
         }
     }
+}
+
+@Composable
+private fun UsesList(container: AppContainer, entry: ItemEntry, onPick: (String) -> Unit) {
+    var state by remember(entry.id) { mutableStateOf<UsesState>(UsesState.Loading) }
+    LaunchedEffect(entry.id) {
+        state = UsesState.Loading
+        state = try {
+            UsesState.Ready(container.recipeStore.ensureLoaded().uses(entry.id))
+        } catch (e: Exception) {
+            UsesState.Failed(e.message ?: "couldn't load the recipe set")
+        }
+    }
+    when (val s = state) {
+        UsesState.Loading -> Loading()
+        is UsesState.Failed -> ErrorPanel(s.message)
+        is UsesState.Ready ->
+            if (s.recipes.isEmpty()) {
+                EmptyHint("Nothing in the loaded recipe set uses ${entry.name}.")
+            } else {
+                LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    items(s.recipes) { r -> RecipeView(r, container.iconCache, onPickItem = onPick) }
+                }
+            }
+    }
+}
+
+private sealed interface UsesState {
+    data object Loading : UsesState
+    data class Failed(val message: String) : UsesState
+    data class Ready(val recipes: List<Recipe>) : UsesState
 }
 
 @Composable
@@ -192,3 +229,6 @@ private fun VanillaIconsButton(container: AppContainer, onSynced: () -> Unit) {
         )
     }
 }
+
+private fun entryFor(cache: IconCache, id: String): ItemEntry =
+    ItemEntry(id = id, name = cache.nameOf(id) ?: prettyItem(id), icon = cache.textureOf(id) ?: "")

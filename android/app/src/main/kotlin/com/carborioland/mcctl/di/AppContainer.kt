@@ -5,6 +5,7 @@ import com.carborioland.mcctl.data.ProfileStore
 import com.carborioland.mcctl.data.ServerRepository
 import com.carborioland.mcctl.data.security.SecureStore
 import com.carborioland.mcctl.ui.IconCache
+import com.carborioland.mcctl.ui.RecipeStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -20,6 +21,9 @@ class AppContainer(context: Context) {
     val profileStore = ProfileStore(context.applicationContext)
     val repository = ServerRepository(appScope, secureStore)
 
-    /** Session-scoped cache for EMI item icons (decoded PNGs from `icons.fetch`). */
-    val iconCache = IconCache(repository)
+    /** EMI item-icon cache: decoded PNGs from `icons.fetch`, persisted under the app cache dir. */
+    val iconCache = IconCache(repository, java.io.File(context.applicationContext.cacheDir, "icons"))
+
+    /** Lazily-synced recipe set powering EMI "what makes / what uses this". */
+    val recipeStore = RecipeStore(repository)
 }

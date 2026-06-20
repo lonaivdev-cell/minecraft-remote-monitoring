@@ -84,6 +84,23 @@ def test_parse_tags_and_alternatives_and_id_result():
     assert reqs[("minecraft:stick", "minecraft:bamboo")] == 1
 
 
+def test_shaped_grid_is_positional_for_emi_rendering():
+    rec = crafting.parse_recipe(SHAPED_CHEST, "minecraft:chest")
+    assert rec.grid_w == 3
+    P = "minecraft:oak_planks"
+    assert rec.grid == [P, P, P, P, "", P, P, P, P]   # the hole in the middle is preserved
+    d = rec.to_dict()
+    assert d["grid"] == rec.grid and d["grid_w"] == 3
+
+
+def test_shapeless_grid_lays_out_left_to_right():
+    rec = crafting.parse_recipe(SHAPELESS_TORCH, "minecraft:torch")
+    assert rec.grid == ["minecraft:coal", "minecraft:stick"] and rec.grid_w == 2
+    # non-crafting recipes carry no grid (rendered as input → output instead)
+    smelt = crafting.parse_recipe(SMELT_IRON, "minecraft:iron_ingot")
+    assert smelt.grid == [] and "grid" not in smelt.to_dict()
+
+
 def test_parse_smelting_carries_cook_metadata():
     rec = crafting.parse_recipe(SMELT_IRON, "minecraft:iron_ingot")
     assert rec.rtype == "smelting" and rec.category == "smelting"
