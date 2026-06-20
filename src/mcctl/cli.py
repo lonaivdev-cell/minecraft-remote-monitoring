@@ -690,14 +690,19 @@ def cmd_recipes(ctx: Ctx) -> int:
     sub = a.recipes_cmd or "search"
     if sub == "search":
         recipes, truncated = crafting.search_recipes(ctx.t, ctx.cfg, query=a.query or "", limit=a.n)
+        if a.craftable:
+            tags = crafting.load_tag_map(ctx.t, ctx.cfg)
+            recipes = crafting.craftable_filter(ctx.console, ctx.cfg, recipes,
+                                                player=a.player or "", tags=tags)
         if a.json:
             print(json.dumps({"recipes": [r.to_dict() for r in recipes],
                               "truncated": truncated}, indent=2))
             return 0
         if not recipes:
-            rc.print(f"[yellow]no crafting recipes match {a.query!r}[/yellow]")
+            scope = " craftable" if a.craftable else ""
+            rc.print(f"[yellow]no{scope} crafting recipes match {a.query!r}[/yellow]")
             return 0
-        t = Table(title=f"{len(recipes)} crafting recipes"
+        t = Table(title=f"{len(recipes)}{' craftable' if a.craftable else ''} crafting recipes"
                         + (f" matching {a.query!r}" if a.query else ""))
         t.add_column("recipe id", style="bold")
         t.add_column("type")
@@ -715,6 +720,13 @@ def cmd_recipes(ctx: Ctx) -> int:
             print(json.dumps(rec.to_dict(), indent=2))
             return 0
         rc.print(crafting.render_recipe(rec))
+        return 0
+    if sub == "cost":
+        cb = crafting.recipe_cost(ctx.t, ctx.cfg, a.id, count=a.count, max_depth=a.max_depth)
+        if a.json:
+            print(json.dumps(cb.to_dict(), indent=2))
+            return 0
+        _render_cost(cb)
         return 0
     if sub == "tag":
         items = crafting.resolve_tag(ctx.t, ctx.cfg, a.id)
@@ -836,6 +848,33 @@ def _render_plan(plan) -> None:
             rc.print("[yellow]not enough materials — recipe shown & planned, not crafted[/yellow]")
         elif plan.limited_by == "stack":
             rc.print("[dim]limited by one output stack (hold/--max caps at a stack)[/dim]")
+
+
+def _render_cost(cb) -> None:
+    head = f"[bold]{cb.target_count}x {cb.target_item}[/bold]  [dim]recipe-tree cost[/dim]"
+    if cb.truncated:
+        head += "  [yellow](truncated — deep or cyclic tree)[/yellow]"
+    rc.print(head)
+    if cb.base:
+        bt = Table(title="base materials to gather")
+        bt.add_column("item", style="bold")
+        bt.add_column("count", justify="right")
+        for item, n in cb.base.items():
+            bt.add_row(item, str(n))
+        rc.print(bt)
+    intermediates = [s for s in cb.steps if s.depth > 0]
+    if intermediates:
+        st = Table(title="intermediate crafts (shallow → deep)")
+        st.add_column("depth", justify="right", style="dim")
+        st.add_column("make")
+        st.add_column("crafts", justify="right")
+        st.add_column("recipe", style="dim")
+        for s in intermediates:
+            st.add_row(str(s.depth), f"{s.produced}x {s.item}", str(s.crafts), s.recipe_id)
+        rc.print(st)
+    if cb.leftovers:
+        rc.print("[dim]leftovers:[/dim] "
+                 + ", ".join(f"{n}x {it}" for it, n in cb.leftovers.items()))
 
 
 def cmd_craft(ctx: Ctx) -> int:
@@ -1459,14 +1498,23 @@ def build_parser() -> argparse.ArgumentParser:
     rs = rsub.add_parser("search", help="find recipes by id/output substring")
     rs.add_argument("query", nargs="?", default="")
     rs.add_argument("-n", type=int, default=60, help="max results")
+    rs.add_argument("--craftable", action="store_true",
+                    help="only recipes you can craft from live inventory")
+    rs.add_argument("--player", default="", help="whose inventory to check (default: config)")
     rs.add_argument("--json", action="store_true")
     rsh = rsub.add_parser("show", help="show one recipe (ingredients + grid)")
     rsh.add_argument("id")
     rsh.add_argument("--json", action="store_true")
+    rco = rsub.add_parser("cost", help="recipe-tree: total base materials + leftovers for a deep craft")
+    rco.add_argument("id", help="recipe id, e.g. minecraft:chest")
+    rco.add_argument("--count", type=int, default=1, help="how many to craft (default 1)")
+    rco.add_argument("--max-depth", type=int, default=64, dest="max_depth")
+    rco.add_argument("--json", action="store_true")
     rt = rsub.add_parser("tag", help="resolve a #tag ingredient to its concrete items")
     rt.add_argument("id", help="tag id, e.g. minecraft:planks (a leading # is optional)")
     rt.add_argument("--json", action="store_true")
-    sp.set_defaults(func=cmd_recipes, recipes_cmd=None, query="", n=60, json=False, id=None)
+    sp.set_defaults(func=cmd_recipes, recipes_cmd=None, query="", n=60, json=False, id=None,
+                    craftable=False, player="", count=1, max_depth=64)
 
     sp = sub.add_parser("items", help="EMI-style item index: ids, display names, icon textures")
     isub = nested(sp, "items_cmd")

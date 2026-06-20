@@ -511,15 +511,37 @@ def _mods_list(srv: AgentServer, params: dict) -> dict:
     return {"mods": [m.to_dict() for m in M.list_mods(srv.ctx.t, srv.ctx.cfg)]}
 
 
-@method("recipes.search", params={"query": "str", "limit": "int", "offset": "int"},
+@method("recipes.search",
+        params={"query": "str", "limit": "int", "offset": "int", "craftable": "bool",
+                "player": "str"},
         summary="Search recipes (crafting/smelting/blasting/smoking/campfire/stonecutting/"
-                "smithing) from the mod jars + datapacks. Page the whole pack with offset.")
+                "smithing) from the mod jars + datapacks. Page the whole pack with offset. "
+                "Set craftable=true to keep only what `player` can craft from live inventory.")
 def _recipes_search(srv: AgentServer, params: dict) -> dict:
     from . import crafting
     recipes, truncated = crafting.search_recipes(
         srv.ctx.t, srv.ctx.cfg, query=str(params.get("query", "")),
         limit=int(params.get("limit", 60)), offset=int(params.get("offset", 0)))
+    if params.get("craftable"):
+        tags = crafting.load_tag_map(srv.ctx.t, srv.ctx.cfg)
+        recipes = crafting.craftable_filter(
+            srv.ctx.console, srv.ctx.cfg, recipes,
+            player=str(params.get("player", "")), tags=tags)
     return {"recipes": [r.to_dict() for r in recipes], "truncated": truncated}
+
+
+@method("recipes.cost", params={"id": "str", "count": "int", "max_depth": "int"},
+        summary="Recipe-tree cost: total base materials + leftovers to craft `count` of a "
+                "recipe, recursively expanding craftable intermediates (EMI-style).")
+def _recipes_cost(srv: AgentServer, params: dict) -> dict:
+    from . import crafting
+    rid = params.get("id", "")
+    if not isinstance(rid, str) or not rid.strip():
+        raise RpcError(INVALID_PARAMS, "id must be a non-empty string")
+    cb = crafting.recipe_cost(
+        srv.ctx.t, srv.ctx.cfg, rid,
+        count=int(params.get("count", 1)), max_depth=int(params.get("max_depth", 64)))
+    return cb.to_dict()
 
 
 @method("recipes.get", params={"id": "str"},

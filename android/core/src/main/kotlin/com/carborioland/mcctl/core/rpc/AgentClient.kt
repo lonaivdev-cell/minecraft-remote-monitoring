@@ -4,6 +4,7 @@ import com.carborioland.mcctl.core.model.BackupEntry
 import com.carborioland.mcctl.core.model.Capability
 import com.carborioland.mcctl.core.model.ConfigContent
 import com.carborioland.mcctl.core.model.ConfigFile
+import com.carborioland.mcctl.core.model.CostBreakdown
 import com.carborioland.mcctl.core.model.CraftPlan
 import com.carborioland.mcctl.core.model.CraftResult
 import com.carborioland.mcctl.core.model.CrashReport
@@ -288,11 +289,29 @@ class AgentClient(
      * (smelting/blasting/smoking/campfire), stonecutting and smithing — from jars + datapacks.
      * [offset] skips that many matches first, so the browser can page the whole pack into a cache.
      */
-    suspend fun recipesSearch(query: String, limit: Int = 60, offset: Int = 0): RecipeSearch =
+    suspend fun recipesSearch(
+        query: String,
+        limit: Int = 60,
+        offset: Int = 0,
+        craftable: Boolean = false,
+        player: String = "",
+    ): RecipeSearch =
         decode(callRaw("recipes.search", obj {
             put("query", JsonPrimitive(query)); put("limit", JsonPrimitive(limit))
             put("offset", JsonPrimitive(offset))
+            if (craftable) put("craftable", JsonPrimitive(true))
+            if (player.isNotBlank()) put("player", JsonPrimitive(player))
         }), RecipeSearch.serializer())
+
+    /**
+     * Recipe-tree cost: the total base materials + leftovers to craft [count] of a recipe,
+     * recursively expanding craftable intermediates (EMI-style). Pure server-side.
+     */
+    suspend fun recipesCost(id: String, count: Int = 1, maxDepth: Int = 64): CostBreakdown =
+        decode(callRaw("recipes.cost", obj {
+            put("id", JsonPrimitive(id)); put("count", JsonPrimitive(count))
+            put("max_depth", JsonPrimitive(maxDepth))
+        }), CostBreakdown.serializer())
 
     /** One recipe by exact id (e.g. "minecraft:chest"). */
     suspend fun recipeGet(id: String): Recipe =

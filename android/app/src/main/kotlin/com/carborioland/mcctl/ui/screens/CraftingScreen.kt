@@ -33,6 +33,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.carborioland.mcctl.core.model.Capability
+import com.carborioland.mcctl.core.model.CostBreakdown
 import com.carborioland.mcctl.core.model.CraftPlan
 import com.carborioland.mcctl.core.model.Ingredient
 import com.carborioland.mcctl.core.model.Recipe
@@ -72,9 +73,12 @@ import kotlinx.coroutines.withContext
 fun CraftingScreen(container: AppContainer) {
     var query by remember { mutableStateOf("") }
     var activeQuery by remember { mutableStateOf("") }
+    var craftableOnly by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf<Recipe?>(null) }
 
-    val res = rememberRpcResource(container, key = activeQuery) { it.recipesSearch(activeQuery, 80) }
+    val res = rememberRpcResource(container, key = activeQuery to craftableOnly) {
+        it.recipesSearch(activeQuery, 80, craftable = craftableOnly)
+    }
 
     val sel = selected
     if (sel != null) {
@@ -89,15 +93,31 @@ fun CraftingScreen(container: AppContainer) {
                 McTextField("Search recipes or items", query, { query = it }, modifier = Modifier.weight(1f))
                 McButton("Search", kind = BtnKind.Primary, modifier = Modifier.padding(start = 10.dp), onClick = { activeQuery = query.trim() })
             }
-            Text(
-                "Read from the pack's mod jars + world datapacks. Tap a recipe to plan and craft it.",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.mc.dim, modifier = Modifier.padding(top = 6.dp),
-            )
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                McButton(
+                    if (craftableOnly) "Craftable ✓" else "Craftable only",
+                    kind = if (craftableOnly) BtnKind.Gold else BtnKind.Neutral,
+                    onClick = { craftableOnly = !craftableOnly },
+                )
+                Text(
+                    if (craftableOnly) "Showing what you can craft from live inventory."
+                    else "Read from the pack's mod jars + world datapacks. Tap a recipe to plan and craft it.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.mc.dim,
+                    modifier = Modifier.padding(start = 10.dp),
+                )
+            }
         }
 
         AsyncContent(res.state, onRetry = res.reload) { search ->
             if (search.recipes.isEmpty()) {
-                EmptyHint(if (activeQuery.isBlank()) "No crafting recipes found in the pack." else "No recipes match \"$activeQuery\".")
+                EmptyHint(
+                    when {
+                        craftableOnly -> "Nothing craftable from your live inventory" +
+                            if (activeQuery.isBlank()) " right now." else " matches \"$activeQuery\"."
+                        activeQuery.isBlank() -> "No crafting recipes found in the pack."
+                        else -> "No recipes match \"$activeQuery\"."
+                    },
+                )
             } else {
                 LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     item {
@@ -188,6 +208,8 @@ internal fun RecipeDetail(container: AppContainer, recipe: Recipe, onBack: () ->
             }
         }
 
+        CostPanel(container, recipe)
+
         AsyncContent(preview.state, onRetry = preview.reload) { plan ->
             CraftControls(
                 plan = plan,
@@ -209,6 +231,86 @@ internal fun RecipeDetail(container: AppContainer, recipe: Recipe, onBack: () ->
                     }
                 },
             )
+        }
+    }
+}
+
+/**
+ * EMI's killer feature, rendered: the recipe-tree cost — total base materials to gather and the
+ * intermediate crafts to get there, with any leftovers. Fetched on demand (`recipes.cost`) so
+ * opening a recipe stays one round-trip; the brain does the recursion.
+ */
+@Composable
+private fun CostPanel(container: AppContainer, recipe: Recipe) {
+    val scope = rememberCoroutineScope()
+    val messenger = LocalMessenger.current
+    var cost by remember(recipe.id) { mutableStateOf<CostBreakdown?>(null) }
+    var loading by remember(recipe.id) { mutableStateOf(false) }
+
+    McPanel {
+        SectionLabel("Cost breakdown")
+        val cb = cost
+        if (cb == null) {
+            Text(
+                "Total raw materials + intermediate crafts to make one ${prettyItem(recipe.resultItem)}.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.mc.dim, modifier = Modifier.padding(vertical = 4.dp),
+            )
+            McButton(
+                if (loading) "Computing…" else "Show cost tree",
+                kind = BtnKind.Neutral, enabled = !loading,
+                onClick = {
+                    loading = true
+                    scope.launch {
+                        try {
+                            cost = withContext(Dispatchers.IO) {
+                                container.repository.requireClient().recipesCost(recipe.id, count = 1)
+                            }
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: RpcException) {
+                            messenger(e.friendly())
+                        } catch (e: Exception) {
+                            messenger(e.message ?: "error")
+                        } finally {
+                            loading = false
+                        }
+                    }
+                },
+            )
+        } else {
+            Text(
+                "To make ${cb.targetCount}× ${prettyItem(cb.targetItem)}:",
+                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(bottom = 4.dp),
+            )
+            Text("Base materials", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.mc.grassLight, modifier = Modifier.padding(top = 4.dp))
+            if (cb.base.isEmpty()) {
+                Text("none — it's a base material itself.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.mc.dim)
+            } else {
+                cb.base.entries.sortedByDescending { it.value }.forEach { (item, n) ->
+                    KeyValue(prettyItem(item), "×$n")
+                }
+            }
+            if (cb.intermediates.isNotEmpty()) {
+                Text("Intermediate crafts", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.mc.grassLight, modifier = Modifier.padding(top = 8.dp))
+                cb.intermediates.forEach { s ->
+                    KeyValue(
+                        "  ".repeat(s.depth - 1) + "${s.produced}× ${prettyItem(s.item)}",
+                        "${s.crafts}× craft",
+                    )
+                }
+            }
+            if (cb.leftovers.isNotEmpty()) {
+                Text(
+                    "Leftovers: " + cb.leftovers.entries.joinToString(", ") { "${it.value}× ${prettyItem(it.key)}" },
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.mc.dim, modifier = Modifier.padding(top = 8.dp),
+                )
+            }
+            if (cb.truncated) {
+                Text(
+                    "Tree was deep or cyclic — figures are a floor.",
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.mc.warning, modifier = Modifier.padding(top = 4.dp),
+                )
+            }
         }
     }
 }

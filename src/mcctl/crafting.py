@@ -583,8 +583,13 @@ def resolve_tag_map(tags: dict[str, list[str]], tag: str) -> list[str]:
     return out
 
 
-def resolve_tag(t: BaseTransport, cfg: Config, tag: str) -> list[str]:
-    """Concrete items a `#tag` ingredient stands for (e.g. `#minecraft:planks`)."""
+def load_tag_map(t: BaseTransport, cfg: Config) -> dict[str, list[str]]:
+    """Scan the jars + datapacks once for every item tag → its raw entries.
+
+    The merge/recursion into concrete items stays in the pure half (`parse_tag_listing`
+    + `resolve_tag_map`); this only runs the one remote pass. Shared by tag resolution,
+    the cost tree, and the craftable filter so they all read the same source of truth.
+    """
     script = (
         f"mods={q(cfg.server.server_dir + '/mods')}\n"
         f"packs={q(_datapacks_dir(cfg))}\n"
@@ -596,8 +601,12 @@ def resolve_tag(t: BaseTransport, cfg: Config, tag: str) -> list[str]:
     if "==NOPY" in r.out:
         raise CraftError("the server has no python3 — tag resolution needs it "
                          "(same requirement as `mcctl mods`)")
-    tags = parse_tag_listing(util.sanitize_terminal(r.out))
-    return resolve_tag_map(tags, tag)
+    return parse_tag_listing(util.sanitize_terminal(r.out))
+
+
+def resolve_tag(t: BaseTransport, cfg: Config, tag: str) -> list[str]:
+    """Concrete items a `#tag` ingredient stands for (e.g. `#minecraft:planks`)."""
+    return resolve_tag_map(load_tag_map(t, cfg), tag)
 
 
 # ================================================================ inventory probing
@@ -848,6 +857,204 @@ def craft(console: Console, cfg: Config, recipe: Recipe, *, count: int | None = 
     out_n = recipe.result_count * effective
     _give(console, plan.receiver, recipe.result_item, out_n)
     return CraftResult(True, effective, recipe.result_item, out_n, consumed, detail)
+
+
+# ================================================================ recipe-tree cost
+
+
+@dataclass(slots=True)
+class CostStep:
+    item: str          # the intermediate produced at this step
+    recipe_id: str     # the recipe that makes it
+    each: int          # output per craft (its result_count)
+    crafts: int        # how many crafts of it the tree needs
+    produced: int      # each * crafts
+    depth: int         # distance from the target (0 = the target itself)
+
+
+@dataclass(slots=True)
+class CostBreakdown:
+    target_item: str
+    target_count: int            # output items the request makes (count * top result_count)
+    base: dict[str, int]         # raw materials with no (expandable) recipe — what to gather
+    leftovers: dict[str, int]    # surplus from over-producing intermediates
+    steps: list[CostStep]        # the target + every intermediate craft, shallow→deep
+    truncated: bool              # hit max_depth, a cycle, or an incomplete recipe set
+
+    def to_dict(self) -> dict:
+        return {
+            "target_item": self.target_item, "target_count": self.target_count,
+            "base": self.base, "leftovers": self.leftovers,
+            "steps": [{"item": s.item, "recipe_id": s.recipe_id, "each": s.each,
+                       "crafts": s.crafts, "produced": s.produced, "depth": s.depth}
+                      for s in self.steps],
+            "truncated": self.truncated,
+        }
+
+
+def build_output_index(recipes: list[Recipe]) -> dict[str, list[Recipe]]:
+    """Map an output item id → the recipes that produce it (first listed = highest priority)."""
+    idx: dict[str, list[Recipe]] = {}
+    for r in recipes:
+        if r.result_item:
+            idx.setdefault(r.result_item, []).append(r)
+    return idx
+
+
+def _representative(preds: list[str], tags: dict[str, list[str]] | None) -> str:
+    """One concrete item to recurse a cost tree through: the first option, a tag → its
+    first member. An unresolved tag is returned as-is so it still bills as a base leaf."""
+    if not preds:
+        return ""
+    p = preds[0]
+    if p.startswith("#"):
+        if tags:
+            members = resolve_tag_map(tags, p)
+            if members:
+                return members[0]
+        return p
+    return p
+
+
+def cost_breakdown(recipe: Recipe, output_index: dict[str, list[Recipe]], *,
+                   count: int = 1, tags: dict[str, list[str]] | None = None,
+                   max_depth: int = 64) -> CostBreakdown:
+    """Expand `count` crafts of `recipe` into total base materials + leftovers (EMI-style).
+
+    Pure: walks `output_index` (item → recipes), drawing each intermediate's surplus from
+    a shared leftover pool so over-production is reused, not double-counted. It picks the
+    first recipe per output and the first option per ingredient (a tag → its first member);
+    a cycle or `max_depth` stops expansion and bills the item as a base material.
+    """
+    count = max(1, int(count))
+    base: Counter[str] = Counter()
+    leftovers: Counter[str] = Counter()
+    steps: dict[str, dict] = {}
+    truncated = False
+
+    def add_step(item: str, recipe_id: str, each: int, crafts: int, depth: int) -> None:
+        s = steps.get(item)
+        if s is None:
+            steps[item] = {"recipe_id": recipe_id, "each": each,
+                           "crafts": crafts, "depth": depth}
+        else:
+            s["crafts"] += crafts
+            s["depth"] = min(s["depth"], depth)
+
+    def produce(item: str, qty: int, depth: int, ancestry: frozenset[str]) -> None:
+        nonlocal truncated
+        if qty <= 0:
+            return
+        have = leftovers[item]
+        if have:                              # spend surplus from earlier siblings first
+            use = min(have, qty)
+            leftovers[item] = have - use
+            qty -= use
+            if qty <= 0:
+                return
+        recs = output_index.get(item)
+        if not recs or depth > max_depth or item in ancestry:
+            if recs:                          # had a recipe but we stopped expanding it
+                truncated = True
+            base[item] += qty
+            return
+        rec = recs[0]
+        each = max(1, rec.result_count)
+        crafts = -(-qty // each)              # ceil division
+        surplus = crafts * each - qty
+        if surplus:
+            leftovers[item] += surplus
+        add_step(item, rec.rid, each, crafts, depth)
+        sub_ancestry = ancestry | {item}
+        for preds, per in rec.requirements():
+            ing = _representative(preds, tags)
+            if ing:
+                produce(ing, per * crafts, depth + 1, sub_ancestry)
+
+    each0 = max(1, recipe.result_count)
+    add_step(recipe.result_item, recipe.rid, each0, count, 0)
+    top = frozenset({recipe.result_item})
+    for preds, per in recipe.requirements():
+        ing = _representative(preds, tags)
+        if ing:
+            produce(ing, per * count, 1, top)
+
+    step_list = [
+        CostStep(item=it, recipe_id=s["recipe_id"], each=s["each"], crafts=s["crafts"],
+                 produced=s["each"] * s["crafts"], depth=s["depth"])
+        for it, s in steps.items()
+    ]
+    step_list.sort(key=lambda s: (s.depth, s.item))
+    return CostBreakdown(
+        target_item=recipe.result_item, target_count=count * each0,
+        base=dict(sorted(base.items())),
+        leftovers={k: v for k, v in sorted(leftovers.items()) if v > 0},
+        steps=step_list, truncated=truncated,
+    )
+
+
+def recipe_cost(t: BaseTransport, cfg: Config, rid: str, *, count: int = 1,
+                max_depth: int = 64) -> CostBreakdown:
+    """Cost-tree for `count` crafts of recipe `rid`: total base materials + leftovers.
+
+    Loads the whole recipe set + tags once, then runs the pure `cost_breakdown`.
+    """
+    recipes, recipes_truncated = search_recipes(t, cfg, query="", limit=5000)
+    target = next((r for r in recipes if r.rid == rid), None)
+    if target is None:
+        hits = [r for r in recipes if rid in r.rid]
+        if len(hits) == 1:
+            target = hits[0]
+    if target is None:
+        raise CraftError(f"no crafting recipe with id {rid!r}")
+    tags = load_tag_map(t, cfg)
+    cb = cost_breakdown(target, build_output_index(recipes), count=count,
+                        tags=tags, max_depth=max_depth)
+    if recipes_truncated:                     # the pack overflowed our scan cap
+        cb.truncated = True
+    return cb
+
+
+# ================================================================ craftable filter
+
+
+def is_craftable(recipe: Recipe, available: dict[str, int], *,
+                 tags: dict[str, list[str]] | None = None) -> bool:
+    """Whether ≥1 craft of `recipe` fits in `available` (item id → loose count).
+
+    Pure. A `#tag` ingredient is met by the sum of its concrete members (needs `tags`);
+    an unresolved tag counts as unavailable.
+    """
+    for preds, per in recipe.requirements():
+        have = 0
+        for p in preds:
+            if p.startswith("#"):
+                if tags:
+                    have += sum(available.get(it, 0) for it in resolve_tag_map(tags, p))
+            else:
+                have += available.get(p, 0)
+            if have >= per:
+                break
+        if have < per:
+            return False
+    return True
+
+
+def craftable_filter(console: Console, cfg: Config, recipes: list[Recipe], *,
+                     player: str = "", tags: dict[str, list[str]] | None = None,
+                     available: dict[str, int] | None = None) -> list[Recipe]:
+    """Keep only recipes `player` can craft now, by one inventory snapshot.
+
+    Reads the whole inventory once (`data get entity … Inventory`, incl. nested
+    backpacks) rather than probing each ingredient — fast enough for a browse filter.
+    The snapshot is best-effort and counts stored items too; the actual `craft`
+    re-probes loose inventory precisely. Pass `available` to filter against a snapshot
+    you already hold (no console round-trip).
+    """
+    if available is None:
+        player = _check_name(player or cfg.crafting.source_player or cfg.crafting.player)
+        available = stored_counts(console, player) or {}
+    return [r for r in recipes if is_craftable(r, available, tags=tags)]
 
 
 # ================================================================ rendering (CLI)
