@@ -29,6 +29,7 @@ import com.carborioland.mcctl.ui.components.McButton
 import com.carborioland.mcctl.ui.components.McTextField
 import com.carborioland.mcctl.ui.theme.TerminalTextStyle
 import com.carborioland.mcctl.ui.theme.mc
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -51,6 +52,8 @@ fun ConsoleScreen(container: AppContainer) {
             try {
                 val out = withContext(Dispatchers.IO) { container.repository.requireClient().cmd(cmd) }
                 lines += false to (out.ifBlank { "(no output)" })
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: RpcException) {
                 lines += false to "error: ${e.friendly()}"
             } catch (e: Exception) {

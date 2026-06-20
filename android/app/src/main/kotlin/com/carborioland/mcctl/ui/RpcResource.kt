@@ -11,6 +11,7 @@ import com.carborioland.mcctl.core.rpc.AgentClient
 import com.carborioland.mcctl.core.rpc.RpcException
 import com.carborioland.mcctl.di.AppContainer
 import com.carborioland.mcctl.ui.components.UiState
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -36,6 +37,10 @@ fun <T> rememberRpcResource(
         state = try {
             val value = withContext(Dispatchers.IO) { load(container.repository.requireClient()) }
             UiState.Data(value)
+        } catch (e: CancellationException) {
+            // The screen left composition (or key/tick changed): let cancellation
+            // propagate instead of rendering "Job was cancelled" as a fake error banner.
+            throw e
         } catch (e: RpcException) {
             UiState.Error(e.friendly())
         } catch (e: Exception) {
