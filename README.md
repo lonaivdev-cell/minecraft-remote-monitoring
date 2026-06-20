@@ -43,7 +43,7 @@ mcctl init  →  mcctl doctor  →  mcctl start  →  mcctl dash
 | `mcctl cmd <anything>` / `console` | arbitrary console commands; `console` attaches to the live tmux (detach: `Ctrl-b d`) |
 | `mcctl logs [-f] [crash]` | tail/follow `latest.log` (timestamps auto-converted to your `[ui].timezone`, default São Paulo); list/fetch crash reports (escape-sequence-sanitized) |
 | `mcctl inspect [SECTION] [--learn]` | deep OS/JVM introspection: process tree, /proc internals, every JVM thread, memory maps, fds, sockets, environment, jcmd flags/heap, host PSI — each section has a `--learn` walkthrough explaining what the kernel structures mean |
-| `mcctl mods` | list every mod with id/version/size, metadata read from inside each jar (NeoForge/Forge/Fabric descriptors) |
+| `mcctl mods [--diff CLIENT_MODS_DIR]` | list every mod with id/version/size (metadata read from inside each jar — NeoForge/Forge/Fabric descriptors); `--diff` compares the server's pack against a local client `mods/` directory and reports server-only / client-only / version-mismatch |
 | `mcctl recipes [search QUERY\|show ID\|tag ID]` | browse the pack's recipes — **all the categories EMI shows**: crafting (shaped/shapeless), the cook family (smelting/blasting/smoking/campfire, with cook time + xp), stonecutting and smithing — read straight out of the mod jars + world datapacks (one server-side pass, like `mods`); shows ingredients, grid pattern and output. `tag <id>` resolves a `#tag` ingredient (e.g. `minecraft:planks`) to the concrete items it accepts |
 | `mcctl items [list\|search QUERY\|icon ID]` | **EMI-style item index**: every item the pack defines with its real display name (from `en_us.json`) and resolved icon texture (model `parent`-chain → texture), read from the vanilla jar + mod jars + `resourcepacks/`. `icon <id> -o out.png` downloads one item's PNG; the phone uses the same `items.manifest` + `icons.fetch` agent methods to cache icons and render recipes with pictures, offline |
 | `mcctl assets [status\|sync]` | **vanilla item assets**: a server ships no client `assets/`, so vanilla items (`minecraft:*`) have no icon/name until `sync` fetches the **matching Mojang client jar** (version auto-detected or `[server].mc_version`) onto the server, sha1-verified and cached, scanned at lowest priority so mods/resourcepacks still override. All download traffic stays on the box ("brain on the box"); `status` shows the detected version + whether it's cached |
@@ -218,7 +218,7 @@ src/mcctl/
 ├── doctor.py     preflight checks + safe fixes (+ post-incident single-restart-authority/ops checks)
 ├── postmortem.py deterministic "what went wrong": crash-report parsing (pure) + events/state assembly
 ├── inspector.py  deep OS/JVM introspection (/proc, threads, maps, fds, jcmd) + learn-mode texts
-├── mods.py       mod inventory — descriptors read from inside the jars, one round-trip
+├── mods.py       mod inventory + client/server pack diff — descriptors read from inside the jars
 ├── crafting.py   recipe browser (jar+datapack scan, pure parsers, all EMI categories) + command-craft
 ├── assets.py     EMI-style item index: lang names + model→icon resolution (pure) + icon PNG fetch
 ├── llm.py        AI analysis & chat: Anthropic + ollama backends, redaction, data envelopes, streaming
