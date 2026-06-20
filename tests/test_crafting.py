@@ -335,3 +335,117 @@ def test_source_and_receiver_split():
     assert res.ok
     assert any(s.startswith("clear STORAGE ") for s in con.sent)
     assert any(s.startswith("give GLEYSSON ") for s in con.sent)
+
+
+# ----------------------------------------------------------------- recipe-tree cost
+
+PLANKS = {  # 1 log -> 4 planks
+    "type": "minecraft:crafting_shapeless",
+    "ingredients": [{"item": "minecraft:oak_log"}],
+    "result": {"item": "minecraft:oak_planks", "count": 4},
+}
+NEEDS3 = {  # 3 planks -> 1 widget (forces over-production of the 4-per-craft planks)
+    "type": "minecraft:crafting_shaped",
+    "pattern": ["P", "P", "P"],
+    "key": {"P": {"item": "minecraft:oak_planks"}},
+    "result": {"item": "mymod:widget", "count": 1},
+}
+IRON_BLOCK = {  # 9 ingot -> 1 block
+    "type": "minecraft:crafting_shaped",
+    "pattern": ["III", "III", "III"],
+    "key": {"I": {"item": "minecraft:iron_ingot"}},
+    "result": {"item": "minecraft:iron_block", "count": 1},
+}
+IRON_INGOT = {  # 1 block -> 9 ingot  (reverse of IRON_BLOCK -> a cycle)
+    "type": "minecraft:crafting_shapeless",
+    "ingredients": [{"item": "minecraft:iron_block"}],
+    "result": {"item": "minecraft:iron_ingot", "count": 9},
+}
+
+
+def _index(*dicts_and_ids):
+    recipes = [crafting.parse_recipe(d, rid) for d, rid in dicts_and_ids]
+    return recipes
+
+
+def test_cost_breakdown_expands_to_base_materials():
+    chest = crafting.parse_recipe(SHAPED_CHEST, "minecraft:chest")
+    recipes = _index((SHAPED_CHEST, "minecraft:chest"), (PLANKS, "minecraft:oak_planks"))
+    idx = crafting.build_output_index(recipes)
+    cb = crafting.cost_breakdown(chest, idx, count=1)
+    # 1 chest = 8 planks = 2 plank-crafts (yield 4 each) = 2 logs, exactly, no waste
+    assert cb.target_item == "minecraft:chest" and cb.target_count == 1
+    assert cb.base == {"minecraft:oak_log": 2}
+    assert cb.leftovers == {}
+    assert not cb.truncated
+    by_item = {s.item: s for s in cb.steps}
+    assert by_item["minecraft:chest"].crafts == 1 and by_item["minecraft:chest"].depth == 0
+    assert by_item["minecraft:oak_planks"].crafts == 2 and by_item["minecraft:oak_planks"].depth == 1
+
+
+def test_cost_breakdown_tracks_leftovers():
+    widget = crafting.parse_recipe(NEEDS3, "mymod:widget")
+    idx = crafting.build_output_index(_index((NEEDS3, "mymod:widget"),
+                                             (PLANKS, "minecraft:oak_planks")))
+    cb = crafting.cost_breakdown(widget, idx, count=1)
+    # 3 planks needed; one plank-craft makes 4 -> 1 leftover plank, 1 log
+    assert cb.base == {"minecraft:oak_log": 1}
+    assert cb.leftovers == {"minecraft:oak_planks": 1}
+
+
+def test_cost_breakdown_reuses_surplus_across_siblings():
+    # widget needs 3 planks; craft 2 widgets -> 6 planks -> 2 plank-crafts (8) -> 2 leftover
+    widget = crafting.parse_recipe(NEEDS3, "mymod:widget")
+    idx = crafting.build_output_index(_index((NEEDS3, "mymod:widget"),
+                                             (PLANKS, "minecraft:oak_planks")))
+    cb = crafting.cost_breakdown(widget, idx, count=2)
+    assert cb.base == {"minecraft:oak_log": 2}
+    assert cb.leftovers == {"minecraft:oak_planks": 2}
+    assert {s.item: s.crafts for s in cb.steps} == {"mymod:widget": 2, "minecraft:oak_planks": 2}
+
+
+def test_cost_breakdown_breaks_cycles():
+    block = crafting.parse_recipe(IRON_BLOCK, "minecraft:iron_block")
+    idx = crafting.build_output_index(_index((IRON_BLOCK, "minecraft:iron_block"),
+                                             (IRON_INGOT, "minecraft:iron_ingot")))
+    cb = crafting.cost_breakdown(block, idx, count=1)
+    # block -> 9 ingot -> (would need a block again) cycle stops, ingot's input bills as base
+    assert cb.truncated
+    assert cb.base == {"minecraft:iron_block": 1}
+
+
+def test_cost_breakdown_resolves_tag_to_first_member():
+    tagged = crafting.parse_recipe(SHAPED_CHEST | {  # a chest-like recipe but via #planks
+        "key": {"#": {"tag": "minecraft:planks"}}}, "minecraft:chest")
+    tags = {"minecraft:planks": ["minecraft:oak_planks", "minecraft:spruce_planks"]}
+    idx = crafting.build_output_index(_index((PLANKS, "minecraft:oak_planks")))
+    cb = crafting.cost_breakdown(tagged, idx, count=1, tags=tags)
+    # #planks -> oak_planks (first member), which has a recipe -> oak_log
+    assert cb.base == {"minecraft:oak_log": 2}
+
+
+# ----------------------------------------------------------------- craftable filter
+
+
+def test_is_craftable_against_snapshot():
+    chest = crafting.parse_recipe(SHAPED_CHEST, "minecraft:chest")     # 8 planks
+    assert crafting.is_craftable(chest, {"minecraft:oak_planks": 8})
+    assert not crafting.is_craftable(chest, {"minecraft:oak_planks": 7})
+
+
+def test_is_craftable_sums_alternatives_and_tags():
+    sign = crafting.parse_recipe(TAGGED, "minecraft:sign")  # 1 #planks + 1 (stick|bamboo)
+    tags = {"minecraft:planks": ["minecraft:oak_planks", "minecraft:spruce_planks"]}
+    # planks split across two member types, the stick alternative satisfied by bamboo
+    inv = {"minecraft:spruce_planks": 1, "minecraft:bamboo": 1}
+    assert crafting.is_craftable(sign, inv, tags=tags)
+    # without the tag map the #planks ingredient can't be satisfied
+    assert not crafting.is_craftable(sign, inv)
+
+
+def test_craftable_filter_keeps_only_makeable():
+    chest = crafting.parse_recipe(SHAPED_CHEST, "minecraft:chest")
+    torch = crafting.parse_recipe(SHAPELESS_TORCH, "minecraft:torch")
+    snapshot = {"minecraft:oak_planks": 8}   # enough for a chest, nothing for a torch
+    kept = crafting.craftable_filter(None, _cfg(), [chest, torch], available=snapshot)
+    assert [r.rid for r in kept] == ["minecraft:chest"]

@@ -343,6 +343,16 @@
       "params": {},
       "summary": "jcmd GC.run with a garbage-vs-leak verdict."
     },
+    "recipes.cost": {
+      "capability": null,
+      "destructive": false,
+      "params": {
+        "count": "int",
+        "id": "str",
+        "max_depth": "int"
+      },
+      "summary": "Recipe-tree cost: total base materials + leftovers to craft `count` of a recipe, recursively expanding craftable intermediates (EMI-style)."
+    },
     "recipes.get": {
       "capability": null,
       "destructive": false,
@@ -355,11 +365,13 @@
       "capability": null,
       "destructive": false,
       "params": {
+        "craftable": "bool",
         "limit": "int",
         "offset": "int",
+        "player": "str",
         "query": "str"
       },
-      "summary": "Search recipes (crafting/smelting/blasting/smoking/campfire/stonecutting/smithing) from the mod jars + datapacks. Page the whole pack with offset."
+      "summary": "Search recipes (crafting/smelting/blasting/smoking/campfire/stonecutting/smithing) from the mod jars + datapacks. Page the whole pack with offset. Set craftable=true to keep only what `player` can craft from live inventory."
     },
     "recipes.tag": {
       "capability": null,
