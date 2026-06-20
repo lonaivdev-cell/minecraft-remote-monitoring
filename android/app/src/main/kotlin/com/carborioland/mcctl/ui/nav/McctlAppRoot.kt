@@ -67,6 +67,7 @@ import com.carborioland.mcctl.ui.screens.DashboardScreen
 import com.carborioland.mcctl.ui.screens.EventsScreen
 import com.carborioland.mcctl.ui.screens.HistoryScreen
 import com.carborioland.mcctl.ui.screens.InspectScreen
+import com.carborioland.mcctl.ui.screens.ItemsScreen
 import com.carborioland.mcctl.ui.screens.JvmScreen
 import com.carborioland.mcctl.ui.screens.LogsScreen
 import com.carborioland.mcctl.ui.screens.ModConfigsScreen
@@ -190,6 +191,7 @@ private fun AppNavHost(
         composable(Destination.Players.route) { PlayersScreen(container) }
         composable(Destination.Backups.route) { BackupsScreen(container) }
         composable(Destination.Mods.route) { ModsScreen(container) }
+        composable(Destination.Items.route) { ItemsScreen(container) }
         composable(Destination.Crafting.route) { CraftingScreen(container) }
         composable(Destination.ModConfigs.route) { ModConfigsScreen(container) }
         composable(Destination.Properties.route) { PropertiesScreen(container) }

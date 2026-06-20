@@ -144,12 +144,15 @@ channel for the app to cache and render offline. Decided 2026-06-20:
       models (`ItemEntry`/`ItemManifest`/`IconBatch`/`VanillaSync`) and the `Recipe`
       fields for the new categories (`category`/`cookingTime`/`experience`). Pure JVM,
       tested by `:core:test` (no SDK).
-- [ ] **Android UI — PR #4 (the renderer):** an `ItemsScreen` (icon grid, search-by-name)
-      and an EMI-style recipe panel with pictures. Needs a Compose icon cache (decode the
-      cached bytes to `ImageBitmap` — no new heavy dep), a one-time sync of manifest +
-      recipes + icons into a local store, an `assets.sync` "get vanilla icons" affordance,
-      and click-through (tap a result → its recipe; tap an ingredient → recipes that make
-      it / what uses it, computed over the cached set).
+- [x] **Android UI — PR #4 (the renderer):** an `ItemsScreen` — EMI-style icon grid,
+      search-by-name, tap an item → the recipes that make it → the existing craft view.
+      `IconCache` (app-scoped) batch-fetches `icons.fetch` PNGs and decodes them to
+      `ImageBitmap`, drawn crisp with `FilterQuality.None` (no new dep); a "Get vanilla
+      icons" button runs `assets.sync`. Registered in the nav drawer (Manage group).
+- [ ] **EMI polish — PR #5:** icons *inside* the recipe panel (result + ingredient
+      pictures, furnace-arrow for the cook family), full uses/making click-through (tap an
+      ingredient → what it makes / what uses it, over the cached recipe set), a persistent
+      on-disk icon cache for true offline, and a craftable-only filter.
 - [x] **Vanilla icons — PR #2:** a server has no client `assets/` (mods carry their
       own), so `assets.py` now fetches the **matching Mojang client jar** and caches it
       where the scans look first (lowest priority — mods/resourcepacks still override).
