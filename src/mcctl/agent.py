@@ -607,6 +607,17 @@ def _icons_fetch(srv: AgentServer, params: dict) -> dict:
             "missing": sorted(want - set(data))}
 
 
+@method("assets.sync", params={"version": "str", "force": "bool"},
+        summary="Download the matching vanilla client jar (cached on the server) so vanilla items "
+                "get icons + names. version=\"\" auto-detects; mods/resourcepacks still override.",
+        capability="actions")
+def _assets_sync(srv: AgentServer, params: dict) -> dict:
+    from . import assets
+    return assets.sync_vanilla(srv.ctx.t, srv.ctx.cfg,
+                               version=str(params.get("version", "")),
+                               force=bool(params.get("force", False)))
+
+
 @method("config.tree", params={"mods": "bool"},
         summary="List config/ files (size/mtime/format, best-effort owning mod).")
 def _config_tree(srv: AgentServer, params: dict) -> dict:

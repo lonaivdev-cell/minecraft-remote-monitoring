@@ -26,6 +26,7 @@ resource pack present in `resourcepacks/` (the client jar ships no `assets/`).
 from __future__ import annotations
 
 import base64
+import re
 
 from . import util
 from .config import Config
@@ -177,7 +178,7 @@ def build_manifest(item_models: dict[str, dict], block_models: dict[str, dict],
 _PY_ASSET_LISTER = r'''
 import json, os, sys, zipfile
 
-mods_dir, packs_dir = sys.argv[1], sys.argv[2]
+vanilla_dir, mods_dir, packs_dir = sys.argv[1], sys.argv[2], sys.argv[3]
 
 def emit(tag, *cols):
     sys.stdout.write(tag + "\t" + "\t".join(c.replace("\t", " ").replace("\n", " ") for c in cols) + "\n")
@@ -250,11 +251,12 @@ def scan_dir(root):
             if wanted(rel):       # resource pack layout: <root>/assets/<ns>/…
                 consider(rel, lambda full=full: open(full, "rb").read())
 
-if os.path.isdir(mods_dir):
-    for entry in sorted(os.listdir(mods_dir)):
-        if entry.endswith(".jar"):
-            scan_zip(os.path.join(mods_dir, entry))
-if os.path.isdir(packs_dir):
+for jar_dir in (vanilla_dir, mods_dir):     # vanilla client jar (lowest) then mods
+    if os.path.isdir(jar_dir):
+        for entry in sorted(os.listdir(jar_dir)):
+            if entry.endswith(".jar"):
+                scan_zip(os.path.join(jar_dir, entry))
+if os.path.isdir(packs_dir):                # resource packs override (highest)
     for entry in sorted(os.listdir(packs_dir)):
         p = os.path.join(packs_dir, entry)
         if os.path.isdir(p):
@@ -296,19 +298,26 @@ def parse_asset_listing(out: str) -> tuple[dict[str, str], dict[str, dict], dict
     return lang, item_models, block_models
 
 
-def _asset_dirs(cfg: Config) -> tuple[str, str]:
+def vanilla_cache_dir(cfg: Config) -> str:
+    """Where `assets.sync` caches the Mojang client jar (scanned at lowest priority)."""
+    return f"{cfg.server.server_dir}/.mcctl/vanilla"
+
+
+def _asset_dirs(cfg: Config) -> tuple[str, str, str]:
+    """(vanilla, mods, resourcepacks) — scanned in that order so packs > mods > vanilla."""
     base = cfg.server.server_dir
-    return f"{base}/mods", f"{base}/resourcepacks"
+    return vanilla_cache_dir(cfg), f"{base}/mods", f"{base}/resourcepacks"
 
 
 def load_assets(t: BaseTransport, cfg: Config) -> tuple[dict[str, str], dict[str, dict], dict[str, dict]]:
-    """Scan mod jars + resourcepacks for lang + item/block models (one remote pass)."""
-    mods, packs = _asset_dirs(cfg)
+    """Scan the vanilla jar + mod jars + resourcepacks for lang + models (one pass)."""
+    vanilla, mods, packs = _asset_dirs(cfg)
     script = (
+        f"vanilla={q(vanilla)}\n"
         f"mods={q(mods)}\n"
         f"packs={q(packs)}\n"
         "command -v python3 >/dev/null 2>&1 || { echo '==NOPY'; exit 0; }\n"
-        f"python3 - \"$mods\" \"$packs\" <<'MCCTL_PY'\n{_PY_ASSET_LISTER}\nMCCTL_PY\n"
+        f"python3 - \"$vanilla\" \"$mods\" \"$packs\" <<'MCCTL_PY'\n{_PY_ASSET_LISTER}\nMCCTL_PY\n"
     )
     r = t.run(script, timeout=180)
     if "==NOPY" in r.out:
@@ -324,7 +333,7 @@ def load_assets(t: BaseTransport, cfg: Config) -> tuple[dict[str, str], dict[str
 # single pass over the jars/packs serves a whole batch. Resource packs are scanned
 # last, so an overriding pack's PNG is what the client keeps.
 _PY_ICON_FETCHER = r'''
-mods_dir, packs_dir = sys.argv[1], sys.argv[2]
+vanilla_dir, mods_dir, packs_dir = sys.argv[1], sys.argv[2], sys.argv[3]
 MAXB = 262144   # skip absurdly large textures; item icons are a few hundred bytes
 
 def emit(texid, b):
@@ -352,11 +361,12 @@ def scan_dir(root):
             except Exception:
                 pass
 
-if os.path.isdir(mods_dir):
-    for entry in sorted(os.listdir(mods_dir)):
-        if entry.endswith(".jar"):
-            scan_zip(os.path.join(mods_dir, entry))
-if os.path.isdir(packs_dir):
+for jar_dir in (vanilla_dir, mods_dir):     # vanilla client jar (lowest) then mods
+    if os.path.isdir(jar_dir):
+        for entry in sorted(os.listdir(jar_dir)):
+            if entry.endswith(".jar"):
+                scan_zip(os.path.join(jar_dir, entry))
+if os.path.isdir(packs_dir):                # resource packs override (highest)
     for entry in sorted(os.listdir(packs_dir)):
         p = os.path.join(packs_dir, entry)
         if os.path.isdir(p):
@@ -395,17 +405,249 @@ def fetch_icons(t: BaseTransport, cfg: Config, textures: list[str]) -> dict[str,
     want = {texture_path(x): _norm_id(x) for x in textures if x}
     if not want:
         return {}
-    mods, packs = _asset_dirs(cfg)
+    vanilla, mods, packs = _asset_dirs(cfg)
     program = ("import base64, json, os, sys, zipfile\n"
                f"WANTED = json.loads({json.dumps(json.dumps(want))})\n"
                + _PY_ICON_FETCHER)
     script = (
+        f"vanilla={q(vanilla)}\n"
         f"mods={q(mods)}\n"
         f"packs={q(packs)}\n"
         "command -v python3 >/dev/null 2>&1 || { echo '==NOPY'; exit 0; }\n"
-        f"python3 - \"$mods\" \"$packs\" <<'MCCTL_PY'\n{program}\nMCCTL_PY\n"
+        f"python3 - \"$vanilla\" \"$mods\" \"$packs\" <<'MCCTL_PY'\n{program}\nMCCTL_PY\n"
     )
     r = t.run(script, timeout=180)
     if "==NOPY" in r.out:
         raise AssetError("the server has no python3 — icon extraction needs it")
     return parse_icon_listing(r.out)
+
+
+# ============================================================ vanilla client jar
+#
+# A Minecraft *server* ships no client assets/ — only mods carry their own — so
+# vanilla items (minecraft:*) have no icon or name until we fetch the matching
+# Mojang *client* jar, which does contain assets/minecraft/{models,textures,lang}.
+# `assets.sync` caches it under vanilla_cache_dir(), where the scans above look
+# first (lowest priority). Following the "brain on the box" design, every network
+# fetch runs on the server over the transport (it always has internet, and the jar
+# has to land there anyway); the smart part — picking the right version's download
+# out of Mojang's manifest — stays here as pure, tested functions.
+
+MOJANG_MANIFEST_URL = "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json"
+
+_RELEASE_RE = re.compile(r"^1\.\d+(?:\.\d+)?$")
+
+
+def _is_release(v: str) -> bool:
+    return bool(_RELEASE_RE.match(v))
+
+
+def _version_key(v: str) -> tuple[int, ...]:
+    return tuple(int(p) for p in v.split("."))
+
+
+# --- version detection (best-effort; [server].mc_version always overrides) ----
+
+_PY_VERSION_PROBE = r'''
+import glob, os, re, sys
+
+srv = sys.argv[1]
+
+def emit(src, v):
+    sys.stdout.write("==VER\t%s\t%s\n" % (src, v))
+
+server_libs = os.path.join(srv, "libraries", "net", "minecraft", "server")
+if os.path.isdir(server_libs):
+    for name in sorted(os.listdir(server_libs)):
+        m = re.match(r"(1\.\d+(?:\.\d+)?)", name)
+        if m:
+            emit("lib", m.group(1))
+
+candidates = [os.path.join(srv, "logs", "latest.log")]
+candidates += sorted(glob.glob(os.path.join(srv, "logs", "*.log")))
+done = set()
+for lf in candidates:
+    if lf in done:
+        continue
+    done.add(lf)
+    if not os.path.isfile(lf):
+        continue
+    try:
+        with open(lf, errors="ignore") as fh:
+            head = fh.read(40000)
+    except Exception:
+        continue
+    for m in re.findall(r"minecraft server version (1\.\d+(?:\.\d+)?)", head):
+        emit("log", m)
+    for m in re.findall(r"\(MC: (1\.\d+(?:\.\d+)?)\)", head):
+        emit("log", m)
+'''
+
+
+def parse_version_probe(out: str) -> str:
+    """Pick the MC version from the probe's ==VER lines: logs win over libraries."""
+    by_src: dict[str, list[str]] = {"log": [], "lib": []}
+    for line in out.splitlines():
+        if line.startswith("==VER\t"):
+            parts = line.split("\t")
+            if len(parts) == 3 and parts[1] in by_src and _is_release(parts[2]):
+                by_src[parts[1]].append(parts[2])
+    for src in ("log", "lib"):               # logs are authoritative; libraries a fallback
+        if by_src[src]:
+            return max(set(by_src[src]), key=_version_key)
+    return ""
+
+
+def detect_mc_version(t: BaseTransport, cfg: Config) -> str:
+    script = (
+        f"srv={q(cfg.server.server_dir)}\n"
+        "command -v python3 >/dev/null 2>&1 || { echo '==NOPY'; exit 0; }\n"
+        f"python3 - \"$srv\" <<'MCCTL_PY'\n{_PY_VERSION_PROBE}\nMCCTL_PY\n"
+    )
+    r = t.run(script, timeout=30)
+    if "==NOPY" in r.out:
+        return ""
+    return parse_version_probe(util.sanitize_terminal(r.out))
+
+
+def resolve_version(t: BaseTransport, cfg: Config, override: str = "") -> str:
+    """Config/CLI override → [server].mc_version → server probe."""
+    v = (override or cfg.server.mc_version or "").strip()
+    return v or detect_mc_version(t, cfg)
+
+
+# --- Mojang manifest selection (pure) -----------------------------------------
+
+
+def pick_version_entry(manifest: dict, version: str) -> str:
+    """The per-version metadata URL for `version` in the launcher manifest, or ""."""
+    for v in manifest.get("versions", []):
+        if isinstance(v, dict) and v.get("id") == version:
+            url = v.get("url", "")
+            return url if isinstance(url, str) else ""
+    return ""
+
+
+def client_download_of(version_json: dict) -> tuple[str, str, int]:
+    """(url, sha1, size) of the `client` download in a per-version json, or ("","",0)."""
+    dl = (version_json.get("downloads") or {}).get("client") or {}
+    url, sha1, size = dl.get("url", ""), dl.get("sha1", ""), dl.get("size", 0)
+    if isinstance(url, str) and url and isinstance(sha1, str):
+        return url, sha1, size if isinstance(size, int) else 0
+    return "", "", 0
+
+
+# --- server-side fetch + verified download ------------------------------------
+
+_PY_FETCH_TEXT = r'''
+import sys, urllib.request
+with urllib.request.urlopen(sys.argv[1], timeout=30) as r:
+    sys.stdout.buffer.write(r.read())
+'''
+
+_PY_DOWNLOAD = r'''
+import hashlib, os, sys, urllib.request
+
+url, dest, want, force = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4] == "1"
+
+def sha1_of(p):
+    h = hashlib.sha1()
+    with open(p, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 16), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+if os.path.isfile(dest) and not force:
+    have = sha1_of(dest)
+    if not want or have == want:
+        sys.stdout.write("==V\tpresent\t%s\n" % have)
+        raise SystemExit
+os.makedirs(os.path.dirname(dest), exist_ok=True)
+tmp = dest + ".part"
+try:
+    urllib.request.urlretrieve(url, tmp)
+except Exception as e:
+    sys.stdout.write("==V\terror\t%s\n" % str(e).replace("\t", " ").replace("\n", " "))
+    raise SystemExit
+got = sha1_of(tmp)
+if want and got != want:
+    os.remove(tmp)
+    sys.stdout.write("==V\tmismatch\t%s\n" % got)
+    raise SystemExit
+os.replace(tmp, dest)
+sys.stdout.write("==V\tdownloaded\t%s\n" % got)
+'''
+
+
+def _fetch_text(t: BaseTransport, url: str) -> str:
+    if not url.startswith("https://"):
+        raise AssetError(f"refusing to fetch a non-https URL: {url!r}")
+    script = (
+        f"url={q(url)}\n"
+        "command -v python3 >/dev/null 2>&1 || { echo '==NOPY'; exit 0; }\n"
+        f"python3 - \"$url\" <<'MCCTL_PY'\n{_PY_FETCH_TEXT}\nMCCTL_PY\n"
+    )
+    r = t.run(script, timeout=90)
+    if "==NOPY" in r.out:
+        raise AssetError("the server has no python3 — fetching the Mojang manifest needs it")
+    return r.out
+
+
+def resolve_client_jar(t: BaseTransport, version: str) -> tuple[str, str]:
+    """(client_jar_url, sha1) for `version`, via two small server-side fetches."""
+    import json
+    try:
+        manifest = json.loads(_fetch_text(t, MOJANG_MANIFEST_URL))
+    except ValueError as e:
+        raise AssetError(f"could not parse Mojang's version manifest: {e}") from e
+    ver_url = pick_version_entry(manifest, version)
+    if not ver_url:
+        raise AssetError(f"Mojang's version manifest has no entry for {version!r}")
+    try:
+        version_json = json.loads(_fetch_text(t, ver_url))
+    except ValueError as e:
+        raise AssetError(f"could not parse the {version} metadata: {e}") from e
+    url, sha1, _size = client_download_of(version_json)
+    if not url:
+        raise AssetError(f"no client download is listed for {version!r}")
+    return url, sha1
+
+
+def parse_sync_result(out: str) -> dict:
+    """The ==V status line → {"status", "sha1"} (status: present|downloaded|mismatch|error)."""
+    for line in out.splitlines():
+        if line.startswith("==V\t"):
+            parts = line.split("\t")
+            return {"status": parts[1] if len(parts) > 1 else "error",
+                    "sha1": parts[2] if len(parts) > 2 else ""}
+    return {"status": "error", "sha1": ""}
+
+
+def download_to(t: BaseTransport, url: str, dest: str, sha1: str = "",
+                *, force: bool = False) -> dict:
+    """Idempotently download `url` to `dest` on the server, verifying `sha1`."""
+    if not url.startswith("https://"):
+        raise AssetError(f"refusing to download a non-https URL: {url!r}")
+    script = (
+        "command -v python3 >/dev/null 2>&1 || { echo '==NOPY'; exit 0; }\n"
+        f"python3 - {q(url)} {q(dest)} {q(sha1)} {q('1' if force else '0')} "
+        f"<<'MCCTL_PY'\n{_PY_DOWNLOAD}\nMCCTL_PY\n"
+    )
+    r = t.run(script, timeout=600)        # a client jar is ~25 MB
+    if "==NOPY" in r.out:
+        raise AssetError("the server has no python3 — downloading the client jar needs it")
+    return parse_sync_result(r.out)
+
+
+def sync_vanilla(t: BaseTransport, cfg: Config, version: str = "",
+                 force: bool = False) -> dict:
+    """Cache the matching vanilla client jar so vanilla items gain icons + names."""
+    ver = resolve_version(t, cfg, version)
+    if not ver:
+        raise AssetError("could not determine the Minecraft version — set "
+                         "[server].mc_version (e.g. \"1.21.1\")")
+    url, sha1 = resolve_client_jar(t, ver)
+    dest = f"{vanilla_cache_dir(cfg)}/{ver}.jar"
+    res = download_to(t, url, dest, sha1, force=force)
+    return {"version": ver, "jar": dest, "url": url, "sha1": res["sha1"],
+            "status": res["status"], "ok": res["status"] in ("present", "downloaded")}

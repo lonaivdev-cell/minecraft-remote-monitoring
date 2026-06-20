@@ -778,6 +778,39 @@ def cmd_items(ctx: Ctx) -> int:
     return 2
 
 
+def cmd_assets(ctx: Ctx) -> int:
+    from . import assets
+    a = ctx.args
+    sub = a.assets_cmd or "status"
+    if sub == "status":
+        ver = assets.resolve_version(ctx.t, ctx.cfg, a.version or "")
+        jar = f"{assets.vanilla_cache_dir(ctx.cfg)}/{ver}.jar" if ver else ""
+        cached = bool(jar) and ctx.t.exists(jar)
+        if a.json:
+            print(json.dumps({"version": ver, "jar": jar, "cached": cached}, indent=2))
+            return 0
+        rc.print(f"Minecraft version: [bold]{ver or '[red]unknown[/red] (set [server].mc_version)'}[/bold]")
+        if ver:
+            rc.print(f"vanilla jar: {jar}")
+            rc.print("cached: " + ("[green]yes[/green]" if cached
+                                   else "[yellow]no — run `mcctl assets sync`[/yellow]"))
+        return 0 if ver else 1
+    if sub == "sync":
+        rc.print("[dim]fetching the vanilla client jar on the server (one-time, ~25 MB)…[/dim]")
+        res = assets.sync_vanilla(ctx.t, ctx.cfg, version=a.version or "", force=a.force)
+        if a.json:
+            print(json.dumps(res, indent=2))
+            return 0 if res["ok"] else 1
+        if res["ok"]:
+            verb = "already cached" if res["status"] == "present" else "downloaded"
+            rc.print(f"[green]{verb}[/green] vanilla {res['version']} → {res['jar']}")
+            rc.print("[dim]vanilla items now resolve in `mcctl items` and the recipe browser.[/dim]")
+            return 0
+        rc.print(f"[red]sync failed[/red] ({res['status']}) for {res['version']}")
+        return 1
+    return 2
+
+
 def _render_plan(plan) -> None:
     rec = plan.recipe
     rc.print(f"[bold]{rec.rid}[/bold]  [dim]{rec.rtype}[/dim]  ->  "
@@ -1451,6 +1484,19 @@ def build_parser() -> argparse.ArgumentParser:
     ic.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_items, items_cmd=None, query="", n=200, json=False,
                     id=None, out=None)
+
+    sp = sub.add_parser("assets",
+                        help="vanilla item assets: fetch the matching client jar so vanilla "
+                             "items get icons + names (mods/resourcepacks still override)")
+    asub = nested(sp, "assets_cmd")
+    ast = asub.add_parser("status", help="show the detected MC version + whether the jar is cached")
+    ast.add_argument("--version", help="override the MC version (e.g. 1.21.1)")
+    ast.add_argument("--json", action="store_true")
+    asy = asub.add_parser("sync", help="download/refresh the vanilla client jar on the server")
+    asy.add_argument("--version", help="override the MC version (default: config or auto-detect)")
+    asy.add_argument("--force", action="store_true", help="re-download even if already cached")
+    asy.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_assets, assets_cmd=None, version=None, force=False, json=False)
 
     sp = sub.add_parser("craft",
                         help="survival command-craft: consume materials, give the output")

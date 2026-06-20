@@ -143,9 +143,14 @@ channel for the app to cache and render offline. Decided 2026-06-20:
       from cached bytes — no new heavy dep), a one-time sync of manifest + recipes +
       icons into a local store, and click-through (tap result → its recipe; tap an
       ingredient → recipes that make it / what uses it, computed over the cached set).
-- [ ] **Vanilla icons:** a server *has* no client `assets/` (mods carry their own).
-      Either drop a client jar / resource pack in `resourcepacks/`, or add an opt-in
-      step that fetches the matching Mojang client jar and extracts `assets/minecraft`.
+- [x] **Vanilla icons — PR #2:** a server has no client `assets/` (mods carry their
+      own), so `assets.py` now fetches the **matching Mojang client jar** and caches it
+      where the scans look first (lowest priority — mods/resourcepacks still override).
+      Version is auto-detected (logs/libraries probe) or set via `[server].mc_version`;
+      the manifest→client-jar selection is pure + tested, the sha1-verified download runs
+      server-side ("brain on the box"). Surfaces: `assets.sync` agent method (actions-gated)
+      + `mcctl assets status|sync`. Verified end-to-end (probe + resourcepack-over-vanilla
+      override) through `LocalTransport`.
 - [ ] **Stretch:** favorites, craftable-only filter, recipe-tree cost breakdown
       (EMI's killer feature — total base materials + leftovers for a deep craft).
 

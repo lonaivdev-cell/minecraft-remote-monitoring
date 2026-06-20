@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 
 import pytest
 
@@ -194,3 +195,149 @@ def test_fetch_icons_inlines_wanted_and_decodes(fake_t, tmp_path):
 def test_fetch_icons_empty_is_noop(fake_t, tmp_path):
     assert assets.fetch_icons(fake_t, _cfg(tmp_path), []) == {}
     assert fake_t.calls == []           # no remote round-trip for an empty request
+
+
+def test_scans_include_vanilla_cache_dir(fake_t, tmp_path):
+    fake_t.expect(lambda s: "take_model" in s, out="")
+    assets.load_assets(fake_t, _cfg(tmp_path))
+    assert any("/.mcctl/vanilla" in c for c in fake_t.calls)   # vanilla jar scanned first
+
+
+# ----------------------------------------------------------------- vanilla: version
+
+
+def test_parse_version_probe_prefers_logs_over_libraries():
+    out = "\n".join([
+        "==VER\tlib\t1.21.1",
+        "==VER\tlog\t1.21.1",
+        "==VER\tlog\t1.21.1",
+        "garbage",
+    ])
+    assert assets.parse_version_probe(out) == "1.21.1"
+    # libraries-only still works as a fallback
+    assert assets.parse_version_probe("==VER\tlib\t1.20.1\n") == "1.20.1"
+
+
+def test_parse_version_probe_picks_highest_and_ignores_non_releases():
+    out = "\n".join([
+        "==VER\tlib\t1.20.1",
+        "==VER\tlib\t1.21.1",
+        "==VER\tlib\tnonsense",        # not a release id -> ignored
+    ])
+    assert assets.parse_version_probe(out) == "1.21.1"
+    assert assets.parse_version_probe("") == ""
+
+
+def test_resolve_version_override_and_config_skip_the_probe(fake_t, tmp_path):
+    cfg = _cfg(tmp_path)
+    assert assets.resolve_version(fake_t, cfg, "1.20.1") == "1.20.1"
+    cfg.server.mc_version = "1.19.2"
+    assert assets.resolve_version(fake_t, cfg, "") == "1.19.2"
+    assert fake_t.calls == []          # neither path touches the server
+
+
+def test_resolve_version_falls_back_to_probe(fake_t, tmp_path):
+    fake_t.expect(lambda s: "==VER" in s, out="==VER\tlog\t1.21.1\n")
+    assert assets.resolve_version(fake_t, _cfg(tmp_path), "") == "1.21.1"
+
+
+# ----------------------------------------------------------------- vanilla: manifest
+
+
+MANIFEST = {"versions": [
+    {"id": "1.21.1", "url": "https://piston-meta.mojang.com/v1/packages/abc/1.21.1.json"},
+    {"id": "1.20.1", "url": "https://piston-meta.mojang.com/v1/packages/def/1.20.1.json"},
+]}
+VERSION_JSON = {"downloads": {"client": {
+    "url": "https://piston-data.mojang.com/v1/objects/deadbeef/client.jar",
+    "sha1": "abc123def456", "size": 26000000}}}
+
+
+def test_pick_version_entry():
+    assert assets.pick_version_entry(MANIFEST, "1.21.1").endswith("/1.21.1.json")
+    assert assets.pick_version_entry(MANIFEST, "9.9.9") == ""
+
+
+def test_client_download_of():
+    assert assets.client_download_of(VERSION_JSON) == (
+        "https://piston-data.mojang.com/v1/objects/deadbeef/client.jar", "abc123def456", 26000000)
+    assert assets.client_download_of({"downloads": {}}) == ("", "", 0)
+
+
+def test_parse_sync_result():
+    assert assets.parse_sync_result("==V\tdownloaded\tabc\n") == {"status": "downloaded", "sha1": "abc"}
+    assert assets.parse_sync_result("==V\tpresent\tdef") == {"status": "present", "sha1": "def"}
+    assert assets.parse_sync_result("noise")["status"] == "error"
+
+
+# ----------------------------------------------------------------- vanilla: sync
+
+
+def test_resolve_client_jar_two_fetches(fake_t, tmp_path):
+    import json as _j
+    fake_t.expect("version_manifest_v2.json", out=_j.dumps(MANIFEST))
+    fake_t.expect("1.21.1.json", out=_j.dumps(VERSION_JSON))
+    url, sha1 = assets.resolve_client_jar(fake_t, "1.21.1")
+    assert url.endswith("/client.jar") and sha1 == "abc123def456"
+
+
+def test_resolve_client_jar_unknown_version(fake_t, tmp_path):
+    import json as _j
+    fake_t.expect("version_manifest_v2.json", out=_j.dumps(MANIFEST))
+    with pytest.raises(assets.AssetError, match="no entry for"):
+        assets.resolve_client_jar(fake_t, "9.9.9")
+
+
+def test_sync_vanilla_downloads_and_is_idempotent(fake_t, tmp_path):
+    import json as _j
+    cfg = _cfg(tmp_path)
+    cfg.server.mc_version = "1.21.1"        # skip the probe
+    fake_t.expect("version_manifest_v2.json", out=_j.dumps(MANIFEST))
+    fake_t.expect("1.21.1.json", out=_j.dumps(VERSION_JSON))
+    fake_t.expect("urlretrieve", out="==V\tdownloaded\tabc123def456\n")
+    res = assets.sync_vanilla(fake_t, cfg)
+    assert res["ok"] and res["status"] == "downloaded" and res["version"] == "1.21.1"
+    assert res["jar"].endswith("/.mcctl/vanilla/1.21.1.jar")
+    assert res["sha1"] == "abc123def456"
+
+
+def test_sync_vanilla_present_is_ok(fake_t, tmp_path):
+    import json as _j
+    cfg = _cfg(tmp_path)
+    cfg.server.mc_version = "1.21.1"
+    fake_t.expect("version_manifest_v2.json", out=_j.dumps(MANIFEST))
+    fake_t.expect("1.21.1.json", out=_j.dumps(VERSION_JSON))
+    fake_t.expect("urlretrieve", out="==V\tpresent\tabc123def456\n")   # already cached, sha matches
+    assert assets.sync_vanilla(fake_t, cfg)["status"] == "present"
+
+
+def test_download_to_refuses_non_https(fake_t, tmp_path):
+    with pytest.raises(assets.AssetError, match="non-https"):
+        assets.download_to(fake_t, "http://evil/jar", "/tmp/x.jar")
+    assert fake_t.calls == []
+
+
+def test_vanilla_jar_resolves_real_items_end_to_end(tmp_path):
+    """A jar dropped in the vanilla cache makes minecraft:* items resolve (real pipeline)."""
+    import json as _j
+    import zipfile
+
+    from mcctl.transport import make_transport
+
+    cfg = _cfg(tmp_path)
+    cache = assets.vanilla_cache_dir(cfg)
+    os.makedirs(cache, exist_ok=True)
+    png = b"\x89PNG\r\n\x1a\n" + b"DIAMOND" * 3
+    with zipfile.ZipFile(os.path.join(cache, "1.21.1.jar"), "w") as z:
+        z.writestr("assets/minecraft/models/item/diamond.json",
+                   _j.dumps({"parent": "item/generated", "textures": {"layer0": "minecraft:item/diamond"}}))
+        z.writestr("assets/minecraft/textures/item/diamond.png", png)
+        z.writestr("assets/minecraft/lang/en_us.json", _j.dumps({"item.minecraft.diamond": "Diamond"}))
+
+    t = make_transport(cfg)
+    lang, im, bm = assets.load_assets(t, cfg)
+    manifest = assets.build_manifest(im, bm, lang)
+    diamond = next(m for m in manifest if m["id"] == "minecraft:diamond")
+    assert diamond == {"id": "minecraft:diamond", "name": "Diamond", "icon": "minecraft:item/diamond"}
+    icons = assets.fetch_icons(t, cfg, ["minecraft:item/diamond"])
+    assert icons["minecraft:item/diamond"] == png

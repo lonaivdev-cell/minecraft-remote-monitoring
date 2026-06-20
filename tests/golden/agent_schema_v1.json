@@ -41,6 +41,15 @@
       "params": {},
       "summary": "Close the session cleanly."
     },
+    "assets.sync": {
+      "capability": "actions",
+      "destructive": false,
+      "params": {
+        "force": "bool",
+        "version": "str"
+      },
+      "summary": "Download the matching vanilla client jar (cached on the server) so vanilla items get icons + names. version=\"\" auto-detects; mods/resourcepacks still override."
+    },
     "backup.create": {
       "capability": "actions",
       "destructive": false,
@@ -513,6 +522,7 @@
       "java_home": "str",
       "log_file": "str",
       "mc_port": "int",
+      "mc_version": "str",
       "rcon_port": "int",
       "server_dir": "str",
       "ssh_key": "str",

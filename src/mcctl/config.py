@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import tomllib
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
@@ -40,6 +41,7 @@ class ServerCfg:
     start_command: str = "bash start.sh"
     log_file: str = "logs/latest.log"                     # relative to server_dir
     world_dir: str = "world"                              # relative to server_dir
+    mc_version: str = ""                                  # e.g. "1.21.1"; "" = auto-detect (vanilla icon sync)
     mc_port: int = 25565
     rcon_port: int = 25575
     java_home: str = "/opt/graalvm"
@@ -180,6 +182,8 @@ class Config:
             problems.append("server.server_dir must be absolute")
         if Path(s.log_file).is_absolute() or Path(s.world_dir).is_absolute():
             problems.append("server.log_file and server.world_dir are relative to server_dir")
+        if s.mc_version and not re.match(r"^[\w.\-]+$", s.mc_version):
+            problems.append("server.mc_version must be a Mojang version id like '1.21.1' (or empty to auto-detect)")
         if b.compression not in ("zstd", "gzip"):
             problems.append("backup.compression must be 'zstd' or 'gzip'")
         if min(b.keep_recent, b.keep_daily, b.keep_weekly) < 0:
@@ -205,11 +209,10 @@ class Config:
             problems.append("llm.log_lines must be >= 10")
         if llm.provider == "ollama" and not llm.ollama_model:
             problems.append("llm.ollama_model must not be empty when provider = 'ollama'")
-        import re as _re
         cr = self.crafting
-        if not _re.match(r"^[A-Za-z0-9_]{1,16}$", cr.player):
+        if not re.match(r"^[A-Za-z0-9_]{1,16}$", cr.player):
             problems.append("crafting.player must be a valid Minecraft name (1-16 of A-Z a-z 0-9 _)")
-        if cr.source_player and not _re.match(r"^[A-Za-z0-9_]{1,16}$", cr.source_player):
+        if cr.source_player and not re.match(r"^[A-Za-z0-9_]{1,16}$", cr.source_player):
             problems.append("crafting.source_player must be empty or a valid Minecraft name")
         if not (1 <= cr.max_output_stack <= 64):
             problems.append("crafting.max_output_stack must be in [1, 64]")
@@ -286,6 +289,7 @@ _KEY_DOC = {
     "ssh_options": 'Extra raw ssh args, e.g. ["-o", "IdentityFile=~/.ssh/carborio"].',
     "transport": '"ssh" for the real server, "local" for dev/testing on this machine.',
     "start_command": "ServerPackCreator entry point (ServerStarterJar), NOT run.sh.",
+    "mc_version": 'Minecraft version (e.g. "1.21.1"); empty auto-detects. Drives `mcctl assets sync`.',
     "stop_countdown": "In-game warning countdown (seconds) before a graceful stop.",
     "provider": '"anthropic" (Claude API, needs the anthropic package + API key) or "ollama" (local).',
     "api_key_env": "Env var holding the API key — mcctl never stores the key itself.",
@@ -323,6 +327,10 @@ tmux_session = "{tmux_session}"
 start_command = "bash start.sh"
 log_file = "logs/latest.log"
 world_dir = "world"
+# Minecraft version, e.g. "1.21.1". Leave empty to auto-detect from the server
+# (logs/libraries). Used by `mcctl assets sync` to fetch the matching vanilla
+# client jar so vanilla items get icons + names in the recipe browser.
+mc_version = ""
 mc_port = 25565
 rcon_port = 25575
 java_home = "/opt/graalvm"
