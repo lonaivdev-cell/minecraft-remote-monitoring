@@ -85,11 +85,15 @@ and route intent ops through it; `ALERT_SSH` ("box down") must be detected from
       (player-count warning before stop, typed confirm for restore) — plus a
       biometric gate for every state change and capability/confirm gating that
       matches the agent's.
-- [ ] Foreground "session" service while a long action runs; resumable on
-      network change (SSH channel re-establish + idempotent RPC ids).
-- [ ] Push alerts: app subscribes to the ntfy topic (server-side bridge already
-      shipped in v0.5.0). Live `events.subscribe` streaming is done; background
-      push is the remaining piece.
+- [x] Foreground "session" service while a long action runs — the `ActionRunner`
+      auto-promotes after ~2.5s (so quick actions don't flicker) with an ongoing
+      notification that keeps the process + SSH channel alive; stops on completion.
+      *(Still TODO: full mid-flight SSH re-establish + idempotent RPC ids on a
+      network change — today a dropped channel reconnects on the next call.)*
+- [x] Push alerts: the app subscribes to the box's ntfy topic — a WorkManager
+      poller (~15 min) raises each message as a notification (own channels, runtime
+      `POST_NOTIFICATIONS`, Settings UI). No Firebase; reuses the v0.5.0 `ntfy_*`
+      sink. Live `events.subscribe` streaming was already done.
 - [ ] AI screen: wire `mcctl ai`-style analysis (currently a deliberate placeholder).
 
 ### Phase 2.5 — recipe browser + command-craft  → **brain shipped**
@@ -156,8 +160,12 @@ channel for the app to cache and render offline. Decided 2026-06-20:
       tabs, `RecipeStore` syncs the whole recipe set once and `RecipeIndex` (pure, tested in
       `:core`) answers both, and tapping any ingredient pivots to that item. `IconCache` now
       indexes item→texture+name and **persists PNGs on disk** for true offline.
-- [ ] **EMI extras (later):** a craftable-only filter, tag-ingredient cycling in slots,
-      and a recipe-tree cost breakdown (total base materials for a deep craft).
+- [x] **EMI extras — craftable-only filter + recipe-tree cost breakdown:** pure, tested
+      core (`is_craftable`/`craftable_filter`, `cost_breakdown` reusing intermediate
+      surplus, cycle-safe) rendered on CLI (`recipes search --craftable`, `recipes cost`),
+      the agent (`recipes.search craftable=true`, `recipes.cost`), and the phone
+      (CraftingScreen toggle + on-demand cost panel).
+- [ ] **EMI extras (later):** tag-ingredient cycling in slots.
 - [x] **Vanilla icons — PR #2:** a server has no client `assets/` (mods carry their
       own), so `assets.py` now fetches the **matching Mojang client jar** and caches it
       where the scans look first (lowest priority — mods/resourcepacks still override).
@@ -166,8 +174,8 @@ channel for the app to cache and render offline. Decided 2026-06-20:
       server-side ("brain on the box"). Surfaces: `assets.sync` agent method (actions-gated)
       + `mcctl assets status|sync`. Verified end-to-end (probe + resourcepack-over-vanilla
       override) through `LocalTransport`.
-- [ ] **Stretch:** favorites, craftable-only filter, recipe-tree cost breakdown
-      (EMI's killer feature — total base materials + leftovers for a deep craft).
+- [ ] **Stretch:** favorites. *(craftable-only filter + recipe-tree cost breakdown —
+      EMI's killer feature, total base materials + leftovers — shipped above.)*
 
 ### Phase 3 — polish
 - [ ] spark profiler launcher with result URL → in-app browser.

@@ -1,18 +1,22 @@
 package com.carborioland.mcctl.ui
 
+import android.content.Context
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import com.carborioland.mcctl.core.rpc.AgentClient
 import com.carborioland.mcctl.core.rpc.RpcException
 import com.carborioland.mcctl.data.ServerRepository
 import com.carborioland.mcctl.di.AppContainer
+import com.carborioland.mcctl.session.SessionService
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -27,6 +31,7 @@ class ActionRunner(
     private val repo: ServerRepository,
     private val gate: suspend (String) -> Boolean,
     private val messenger: (String) -> Unit,
+    private val appContext: Context,
 ) {
     var busy by mutableStateOf(false)
         private set
@@ -51,6 +56,14 @@ class ActionRunner(
         scope.launch {
             if (!confirmed && !gate(reason)) return@launch
             busy = true
+            // If the action runs long, promote to a foreground service so Android keeps the
+            // process (and the SSH channel) alive; quick actions finish before this fires.
+            var sessionUp = false
+            val promote = launch {
+                delay(PROMOTE_AFTER_MS)
+                SessionService.start(appContext, reason)
+                sessionUp = true
+            }
             try {
                 val msg = withContext(Dispatchers.IO) { work(repo.requireClient()) }
                 if (!msg.isNullOrBlank()) messenger(msg)
@@ -62,10 +75,16 @@ class ActionRunner(
             } catch (e: Exception) {
                 messenger(e.message ?: "error")
             } finally {
+                promote.cancel()
+                if (sessionUp) SessionService.stop(appContext)
                 busy = false
                 onComplete?.invoke()
             }
         }
+    }
+
+    private companion object {
+        const val PROMOTE_AFTER_MS = 2_500L
     }
 }
 
@@ -74,5 +93,6 @@ fun rememberActionRunner(container: AppContainer): ActionRunner {
     val scope = rememberCoroutineScope()
     val gate = LocalActionGate.current
     val messenger = LocalMessenger.current
-    return remember { ActionRunner(scope, container.repository, gate, messenger) }
+    val appContext = LocalContext.current.applicationContext
+    return remember { ActionRunner(scope, container.repository, gate, messenger, appContext) }
 }
