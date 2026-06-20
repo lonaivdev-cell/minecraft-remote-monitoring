@@ -1,6 +1,7 @@
 package com.carborioland.mcctl.ui.nav
 
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Biotech
@@ -49,6 +50,7 @@ enum class Destination(
     Players("players", "Players", Icons.Filled.Group, NavGroup.Manage),
     Backups("backups", "Backups", Icons.Filled.Archive, NavGroup.Manage),
     Mods("mods", "Mods", Icons.Filled.Extension, NavGroup.Manage),
+    Items("items", "Items", Icons.Filled.Apps, NavGroup.Manage),
     Crafting("crafting", "Crafting", Icons.Filled.GridView, NavGroup.Manage),
     ModConfigs("modconfigs", "Mod Configs", Icons.Filled.Edit, NavGroup.Manage),
     Properties("properties", "Properties", Icons.Filled.Tune, NavGroup.Manage),

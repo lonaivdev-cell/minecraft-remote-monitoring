@@ -113,7 +113,7 @@ fun CraftingScreen(container: AppContainer) {
 }
 
 @Composable
-private fun RecipeRow(r: Recipe, onClick: () -> Unit) {
+internal fun RecipeRow(r: Recipe, onClick: () -> Unit) {
     McPanel(Modifier.clickable(onClick = onClick)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -129,7 +129,7 @@ private fun RecipeRow(r: Recipe, onClick: () -> Unit) {
 }
 
 @Composable
-private fun RecipeDetail(container: AppContainer, recipe: Recipe, onBack: () -> Unit) {
+internal fun RecipeDetail(container: AppContainer, recipe: Recipe, onBack: () -> Unit) {
     val runner = rememberActionRunner(container)
     val canAct = Capability.ACTIONS in container.repository.capabilities
     val preview = rememberRpcResource(container, key = recipe.id) { it.craftPreview(recipe.id, count = null) }
