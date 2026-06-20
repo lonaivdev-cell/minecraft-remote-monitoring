@@ -47,7 +47,7 @@ mcctl init  →  mcctl doctor  →  mcctl start  →  mcctl dash
 | `mcctl recipes [search QUERY\|show ID\|tag ID]` | browse the pack's recipes — **all the categories EMI shows**: crafting (shaped/shapeless), the cook family (smelting/blasting/smoking/campfire, with cook time + xp), stonecutting and smithing — read straight out of the mod jars + world datapacks (one server-side pass, like `mods`); shows ingredients, grid pattern and output. `tag <id>` resolves a `#tag` ingredient (e.g. `minecraft:planks`) to the concrete items it accepts |
 | `mcctl items [list\|search QUERY\|icon ID]` | **EMI-style item index**: every item the pack defines with its real display name (from `en_us.json`) and resolved icon texture (model `parent`-chain → texture), read from the vanilla jar + mod jars + `resourcepacks/`. `icon <id> -o out.png` downloads one item's PNG; the phone uses the same `items.manifest` + `icons.fetch` agent methods to cache icons and render recipes with pictures, offline |
 | `mcctl assets [status\|sync]` | **vanilla item assets**: a server ships no client `assets/`, so vanilla items (`minecraft:*`) have no icon/name until `sync` fetches the **matching Mojang client jar** (version auto-detected or `[server].mc_version`) onto the server, sha1-verified and cached, scanned at lowest priority so mods/resourcepacks still override. All download traffic stays on the box ("brain on the box"); `status` shows the detected version + whether it's cached |
-| `mcctl craft ID [--count N\|--max] [--source\|--receiver NAME] [--preview]` | survival **command-craft**: reads your live inventory, consumes the inputs (`/clear`) and grants the output (`/give`). `--max` makes the most your materials allow, capped at one output stack. Only ever consumes *loose* (accessible) inventory, so it can't dupe; `--preview` plans without crafting (see [the honest note below](#command-craft-adapting-pick-a-recipe-it-gets-made)) |
+| `mcctl craft ID [--count N\|--max] [--source\|--receiver NAME] [--preview]` | survival **command-craft**: reads your live inventory, consumes the inputs (`/clear`) and grants the output (`/give`). `--max` makes the most your materials allow, capped at one output stack. Only ever consumes *loose* (accessible) inventory, so it can't dupe; `--preview` plans without crafting (see [the honest note below](#command-craft-pick-a-recipe-it-gets-made)) |
 | `mcctl config [tree\|get\|set\|edit]` | browse & edit the per-mod files under `config/` — `tree` lists them grouped by the owning mod (matched from the jars), `get` prints one, `edit` opens it in `$EDITOR` and re-uploads (TOML/JSON validated before write, atomic, timestamped `.bak`), `set` writes from a file/stdin; `--reload` runs `/reload`, `--restart` does a full apply. Saving relies on NeoForge's config file-watcher to live-reload mods that support it — startup/cached values still need a restart |
 | `mcctl ai [logs\|crash\|mods\|inspect\|ask\|chat]` | AI analysis & multi-turn chat, powered by **Claude or a local LLM via ollama** (`[llm].provider`): review logs, root-cause crash reports, explain what the mods do, teacher-mode walkthroughs, free-form questions, and an interactive `chat` session — all with live server context attached |
 | `mcctl stats` | local JSONL metrics history (TPS, MSPT, heap, RAM, players) |
@@ -237,8 +237,8 @@ src/mcctl/
 `mcctl agent` is a long-lived **JSON-RPC 2.0** server speaking newline-delimited
 JSON over its stdin/stdout — meant to be run at the end of a single SSH channel.
 Every method reuses the same tested core the CLI calls; nothing is reimplemented.
-This is the contract the planned Android app (and any script or dashboard)
-renders over — *one brain, two faces*.
+This is the contract the Android app (and any script or dashboard)
+renders over — *one brain, many faces*.
 
 ```fish
 # locally, eyeball it (each line is one request/response):
@@ -261,47 +261,87 @@ mcctl agent --schema          # the versioned, machine-readable contract
 - **Events:** `events.subscribe` streams watchdog heals/alerts as JSON-RPC
   notifications, backed by the same `events.jsonl` journal `mcctl events` tails.
 
-## Command-craft: "adapting *pick a recipe, it gets made*"
+## EMI on your phone: item & recipe browser + command-craft
 
-The dream is to tap a recipe on your phone and have it auto-fill the crafting grid
-(holding to use every material, up to a stack). mcctl is a **server-ops tool** — it
-drives the server over RCON/console and does **not** run inside your game client, so
-it physically can't reach into your open crafting GUI to place items; that's a
-*client mod's* job (JEI/REI's recipe-transfer "+" button). What mcctl does instead is
-reproduce the **outcome** entirely through console commands:
+The headline feature: bring an [EMI](https://emi.dev)-style **item & recipe browser** to the
+phone — browse every item the pack defines *with real icons*, search by name, open a recipe
+drawn as a proper crafting grid, flip between **what makes** and **what uses** an item, and tap
+any ingredient to pivot — then **craft it for real** against your live inventory.
 
-1. **Browse** — `mcctl recipes search <text>` / the phone's `recipes.search` reads
-   every shaped/shapeless crafting recipe out of the mod jars **and** the world
-   datapacks (same one-pass jar scan as `mcctl mods`), so you pick from what the pack
-   actually defines — no hand-maintained list.
-2. **Plan** — `mcctl craft <id> --preview` probes your *live* inventory (`/clear … 0`
-   only counts, never removes) and tells you how many you can make right now and
-   what's the limiting ingredient. Tags like `#minecraft:planks` are handled natively
-   (the count/consume predicate accepts them, just like the grid would).
-3. **Craft** — `mcctl craft <id>` consumes the inputs (`/clear`) and grants the output
-   (`/give`). `--max` (the phone's **hold-to-craft >3s** gesture) makes the most your
-   materials allow, capped at one output stack — *"the biggest amount, limited to that
-   stack"*.
+EMI is a *client* mod: it has every resource pack on hand and renders each stack from item
+models, textures, and `en_us.json`. mcctl is **server-side** — it can't reach your game client —
+so the **brain reads the very files EMI reads** (mod jars + `resourcepacks/` + the vanilla client
+jar) and ships the item index + icon PNGs down the SSH channel for the app to cache and render
+**offline**. *One brain, many faces*: the tested Python core resolves everything; the CLI, the
+agent, and the phone only render it.
 
-It works the same whether you're at a crafting table **or** a Backpacked crafting
-backpack, because it never depends on the GUI — you just have to be online.
+### How the brain does it (server-side, all unit-tested)
+
+| Step | Module | What it extracts |
+|---|---|---|
+| **Recipes** | `crafting.py` | Every vanilla **category EMI shows** — crafting (shaped/shapeless), the cook family (smelting/blasting/smoking/campfire, with cook time + xp), stonecutting, smithing — scanned from the mod jars **and** world datapacks in one pass, newest-pack-wins. Shaped recipes carry a **positional grid** so a client can draw icons in the right cells. |
+| **Item index** | `assets.py` | Every item's **display name** (from `en_us.json`) + its **icon texture** (resolved through the model `parent`-chain), for the whole pack. |
+| **Icons** | `assets.py` | The actual **PNG bytes**, fetched in batches and cached — modded items resolve from their own jars; vanilla items from the client jar (below). |
+| **Vanilla** | `assets.py` | A server ships **no client `assets/`**, so `mcctl assets sync` fetches the **matching Mojang client jar** onto the box and scans it at lowest priority — mods/resourcepacks still override. |
+
+Resource packs override mods override vanilla — the same load-order rule throughout.
+
+### On the phone (the EMI experience)
+
+The Android **Items** screen is the browser:
+
+1. **Browse & search** — an adaptive **icon grid** of every item, searchable by name or id.
+   Icons stream in as batches land and are **persisted to disk**, so a second visit is instant
+   and works with no signal.
+2. **Open an item** → its detail: a big icon, and **Recipes / Uses** tabs.
+   - **Recipes** = what crafts it, each rendered as an **EMI recipe card**: a beveled-slot
+     crafting grid with the real icons in their cells, an arrow, the **result slot with its
+     stack count**, and a **furnace line** (time + xp) for the cook family.
+   - **Uses** = everything that consumes it (the app syncs the whole recipe set once, then
+     answers instantly from a client-side index).
+3. **Pivot** — tap any ingredient slot to jump to *that* item's recipes, EMI-style.
+4. **Get vanilla icons** — one tap runs `assets.sync` so base-game items gain icons + names.
+5. **Craft it** — the **Crafting** screen plans a recipe against your live inventory and crafts
+   it: **tap** to craft one, **press-and-hold** past `[crafting].hold_ms` to craft the max.
+
+### On the CLI / desktop
+
+```fish
+mcctl items search diamond        # the item index: id · display name · icon texture
+mcctl items icon minecraft:chest -o chest.png   # download one item's PNG
+mcctl recipes search chest        # recipes across every category (id/output match)
+mcctl recipes show minecraft:chest    # ingredients, grid, cook time…
+mcctl recipes tag minecraft:planks    # what a #tag ingredient accepts
+mcctl assets status               # detected MC version + is the vanilla jar cached?
+mcctl assets sync                 # fetch the matching client jar (vanilla icons + names)
+mcctl craft minecraft:chest --preview  # plan against live inventory, craft nothing
+mcctl craft minecraft:chest --max      # craft the most your materials allow (one stack)
+```
+
+### Command-craft: "pick a recipe, it gets made"
+
+mcctl can't reach your open crafting GUI (that's a client mod's job — JEI/REI's recipe-transfer
+"+"), so instead it reproduces the **outcome** over the console: it reads your live inventory,
+consumes the inputs with `/clear`, and grants the output with `/give`. It works the same at a
+crafting table **or** a Backpacked crafting backpack — you just have to be online.
 
 **Survival-honest, by construction:**
-- `/clear` only ever touches **loose** inventory slots, so we can only consume what
-  you actually, accessibly have — there's no way to dupe, and a recipe is only made
-  if the materials are really there (otherwise it's shown and planned, not crafted).
-- Items nested **inside** a backpack/shulker can't be removed by `/clear`, so they're
-  never auto-consumed. With `[crafting].include_containers` on, the planner still
-  *shows* them as "+N in storage" so you know to pull them out first.
-- Set `[crafting].player` to your IGN (default `GLEYSSON`); `source_player` lets a
-  shared **storage** account supply the materials while your player receives the
-  output (`--source` / `--receiver` override per-craft). Configured player names and
-  item predicates are charset-validated before they ever reach a console command.
+- `/clear` only ever touches **loose** inventory slots, so it can only consume what you
+  accessibly have — there's no way to dupe, and a recipe is made only if the materials are
+  really there (otherwise it's shown and planned, not crafted).
+- Items nested **inside** a backpack/shulker can't be removed by `/clear`, so they're never
+  auto-consumed. With `[crafting].include_containers` on, the planner still *shows* them as
+  "+N in storage" so you know to pull them out first.
+- Set `[crafting].player` to your IGN (default `GLEYSSON`); `source_player` lets a shared
+  **storage** account supply the materials while your player receives the output (`--source` /
+  `--receiver` override per-craft). Player names and item predicates are charset-validated
+  before they ever reach a console command, and this pack's crash logs (known to carry
+  prompt-injection text) are sanitized.
 
-> The phone now renders this too: the Android **Crafting** screen is a recipe picker
-> over `recipes.search`, a live `craft.preview` plan, and a press-and-hold craft button
-> (tap → `craft.do {count:1}`, hold past `[crafting].hold_ms` → `{count:null}`), with
-> `#tag` ingredients expanded via `recipes.tag`. One brain, three faces. See
+> *Non-vanilla recipe types* (Create's mixing, Mekanism machines, …) use bespoke formats +
+> per-mod plugins — exactly like EMI needs an addon for them — so they're out of scope here.
+> The full contract is in `mcctl agent --schema`: `items.manifest`, `icons.fetch`,
+> `recipes.search/get/tag`, `craft.preview/do`, `assets.sync`. See
 > **[android/README.md](android/README.md)** and **[TODO.md](TODO.md)**.
 
 ## Off-box: push & metrics
@@ -340,10 +380,13 @@ faces* — the tested Python core stays the single source of truth.
 It mirrors the desktop GUI: live Overview (status + start/stop/restart/save/backup/
 purge/kill + watchdog arm), TPS/MSPT/heap/RAM/players/load history charts, console,
 log tail, live watchdog event stream, players (whitelist/op/kick/ban), backups
-(create/prune/verify/restore with a typed confirm), mods, a **Crafting** page (search
-the pack's recipes → a live plan against your inventory → **tap to craft one, press-and-hold
-to craft a stack**, honoring `[crafting].hold_ms`; `#tag` ingredients expand to their real
-items), validated server.properties editor, JVM heap, crash reports + deterministic
+(create/prune/verify/restore with a typed confirm), mods, an **Items** browser
+(EMI-style: a searchable **icon grid** of every item → tap one for its recipes/uses as real
+**crafting-grid cards with icons**, tap an ingredient to pivot, *Get vanilla icons* fetches the
+base game, all cached **offline**), a **Crafting** page (search the pack's recipes → a live plan
+against your inventory → **tap to craft one, press-and-hold to craft a stack**, honoring
+`[crafting].hold_ms`; `#tag` ingredients expand to their real items), validated
+server.properties editor, JVM heap, crash reports + deterministic
 postmortem, OS/JVM inspect, and the spark profiler. The AI page is a deliberate placeholder
 (an on-device/cloud LLM is a later cycle). Security is unchanged: SSH only, a per-device
 Ed25519 key in the Android Keystore, host-key TOFU, and a biometric gate for actions — see
