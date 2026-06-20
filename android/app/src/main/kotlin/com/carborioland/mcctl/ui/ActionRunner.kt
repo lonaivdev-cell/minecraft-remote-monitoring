@@ -10,6 +10,7 @@ import com.carborioland.mcctl.core.rpc.AgentClient
 import com.carborioland.mcctl.core.rpc.RpcException
 import com.carborioland.mcctl.data.ServerRepository
 import com.carborioland.mcctl.di.AppContainer
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -54,6 +55,8 @@ class ActionRunner(
                 val msg = withContext(Dispatchers.IO) { work(repo.requireClient()) }
                 if (!msg.isNullOrBlank()) messenger(msg)
                 if (refreshAfter) repo.refresh(false)
+            } catch (e: CancellationException) {
+                throw e  // never swallow cancellation — let the scope unwind cleanly
             } catch (e: RpcException) {
                 messenger(e.friendly())
             } catch (e: Exception) {

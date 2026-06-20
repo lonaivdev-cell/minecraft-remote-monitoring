@@ -20,6 +20,21 @@ _NUM = r"\*?([0-9]+(?:[.,][0-9]+)?)\*?"
 _URL_RE = re.compile(r"https://spark\.lucko\.me/\S+")
 _UNKNOWN_RE = re.compile(r"unknown (?:or incomplete )?command", re.IGNORECASE)
 
+# Server-log line prefix: "[13:27:01] [spark-worker-pool-1-thread-1/INFO]: ".
+# RCON replies arrive clean, but the tmux + log-offset fallback reads spark's output
+# straight from latest.log, where every line carries this stamp. Left in place, the
+# timestamp's digits get scooped up as TPS/MSPT values (e.g. tps_now == the log's
+# minutes field), so strip it before parsing. One or more "[...]" logger brackets may
+# follow the time (vanilla has one, some loaders add a logger name).
+_LOG_PREFIX_RE = re.compile(
+    r"^\s*\[\d{2}:\d{2}:\d{2}(?:\.\d+)?\]\s*(?:\[[^\]]*\]\s*)+:?\s?",
+    re.MULTILINE,
+)
+
+
+def _strip_log_prefix(text: str) -> str:
+    return _LOG_PREFIX_RE.sub("", text)
+
 
 class SparkError(RuntimeError):
     pass
@@ -66,7 +81,7 @@ def _f(s: str) -> float:
 def parse_tps(text: str) -> TpsReport:
     """Tolerant parser for `spark tps` output (color codes already stripped)."""
     rep = TpsReport()
-    t = util.strip_mc_codes(text)
+    t = _strip_log_prefix(util.strip_mc_codes(text))
 
     m = re.search(r"TPS from last(?P<windows>[^:]*):\s*(?P<vals>[^\n;]*)", t, re.IGNORECASE)
     if m:
@@ -96,7 +111,7 @@ def parse_tps(text: str) -> TpsReport:
 
 def parse_health(text: str) -> HealthReport:
     rep = HealthReport()
-    t = util.strip_mc_codes(text)
+    t = _strip_log_prefix(util.strip_mc_codes(text))
     m = re.search(r"TPS from last(?P<w>[^:]*):\s*(?P<v>[^\n;]*)", t, re.IGNORECASE)
     if m:
         windows = re.findall(r"(\d+(?:s|m|h))", m.group("w"))

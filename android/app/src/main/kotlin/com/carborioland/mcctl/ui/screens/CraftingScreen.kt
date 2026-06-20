@@ -54,6 +54,7 @@ import com.carborioland.mcctl.ui.components.pixelBevel
 import com.carborioland.mcctl.ui.rememberActionRunner
 import com.carborioland.mcctl.ui.rememberRpcResource
 import com.carborioland.mcctl.ui.theme.mc
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -171,6 +172,8 @@ internal fun RecipeDetail(container: AppContainer, recipe: Recipe, onBack: () ->
                                 try {
                                     val items = withContext(Dispatchers.IO) { container.repository.requireClient().recipesTag(tag).items }
                                     tagItems[tag] = items
+                                } catch (e: CancellationException) {
+                                    throw e
                                 } catch (e: RpcException) {
                                     messenger(e.friendly())
                                 } catch (e: Exception) {

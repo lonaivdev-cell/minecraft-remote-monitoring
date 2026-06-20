@@ -31,10 +31,35 @@ def test_parse_tps():
     assert rep.mspt_median == 4.8
 
 
+# The tmux + log-offset fallback reads spark's reply straight from latest.log, so every
+# line carries a "[HH:MM:SS] [thread/INFO]: " stamp. Before stripping it, the timestamp's
+# digits were scooped up as TPS/MSPT values — tps_now came out as the log's minutes field
+# (here 27), a frozen-looking number above 20. This is the exact output the user reported.
+TPS_TEXT_LOG_PREFIXED = """\
+[13:27:01] [spark-worker-pool-1-thread-1/INFO]: [⚡] TPS from last 5s, 10s, 1m, 5m, 15m:
+[13:27:01] [spark-worker-pool-1-thread-1/INFO]: [⚡]  *20.0, 20.0, 20.0, *20.0, 19.7
+[13:27:01] [spark-worker-pool-1-thread-1/INFO]: [⚡]
+[13:27:01] [spark-worker-pool-1-thread-1/INFO]: [⚡] Tick durations (min/med/95%ile/max ms) from last 10s, 1m:
+[13:27:01] [spark-worker-pool-1-thread-1/INFO]: [⚡]  1.5/1.6/2.0/4.7;  0.8/1.6/1.9/292.7
+[13:27:01] [spark-worker-pool-1-thread-1/INFO]: [⚡] CPU usage from last 10s, 1m, 15m:
+[13:27:01] [spark-worker-pool-1-thread-1/INFO]: [⚡]  5%, 6%, 5%  (system)
+[13:27:01] [spark-worker-pool-1-thread-1/INFO]: [⚡]  3%, 3%, 3%  (process)
+"""
+
+
 def test_parse_tps_tolerates_garbage():
     rep = parse_tps("nothing useful here")
     assert rep.tps == {}
     assert rep.tps_now is None
+
+
+def test_parse_tps_strips_server_log_prefix():
+    """spark output read from latest.log (tmux fallback) must not parse the timestamp."""
+    rep = parse_tps(TPS_TEXT_LOG_PREFIXED)
+    assert rep.tps == {"5s": 20.0, "10s": 20.0, "1m": 20.0, "5m": 20.0, "15m": 19.7}
+    assert rep.tps_now == 20.0  # not 27.0 (the log timestamp's minutes)
+    assert rep.mspt == {"min": 1.5, "median": 1.6, "p95": 2.0, "max": 4.7}
+    assert rep.cpu_system == {"10s": 5.0, "1m": 6.0, "15m": 5.0}
 
 
 def test_parse_health():
