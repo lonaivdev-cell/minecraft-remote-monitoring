@@ -56,7 +56,13 @@ class AgentClientTest {
                 put("id", JsonPrimitive(id))
                 put("result", kotlinx.serialization.json.JsonNull)
             }
-            "recipes.search" -> FakeTransport.reply(id, buildJsonObject {
+            // craftable=true filters server-side; the fixture proves the param crosses the wire.
+            "recipes.search" -> if (params["craftable"]?.jsonPrimitive?.content == "true")
+                FakeTransport.reply(id, buildJsonObject {
+                    put("recipes", buildJsonArray { })
+                    put("truncated", JsonPrimitive(false))
+                })
+            else FakeTransport.reply(id, buildJsonObject {
                 put("recipes", buildJsonArray {
                     add(buildJsonObject {
                         put("id", JsonPrimitive("minecraft:chest"))
@@ -98,6 +104,26 @@ class AgentClientTest {
                 put("items", buildJsonArray {
                     add(JsonPrimitive("minecraft:oak_planks")); add(JsonPrimitive("minecraft:spruce_planks"))
                 })
+            })
+            "recipes.cost" -> FakeTransport.reply(id, buildJsonObject {
+                put("target_item", JsonPrimitive(params["id"]?.jsonPrimitive?.content ?: ""))
+                put("target_count", JsonPrimitive(1))
+                put("base", buildJsonObject { put("minecraft:oak_log", JsonPrimitive(2)) })
+                put("leftovers", buildJsonObject { put("minecraft:oak_planks", JsonPrimitive(1)) })
+                put("steps", buildJsonArray {
+                    add(buildJsonObject {
+                        put("item", JsonPrimitive("minecraft:chest")); put("recipe_id", JsonPrimitive("minecraft:chest"))
+                        put("each", JsonPrimitive(1)); put("crafts", JsonPrimitive(1))
+                        put("produced", JsonPrimitive(1)); put("depth", JsonPrimitive(0))
+                    })
+                    add(buildJsonObject {
+                        put("item", JsonPrimitive("minecraft:oak_planks"))
+                        put("recipe_id", JsonPrimitive("minecraft:oak_planks"))
+                        put("each", JsonPrimitive(4)); put("crafts", JsonPrimitive(2))
+                        put("produced", JsonPrimitive(8)); put("depth", JsonPrimitive(1))
+                    })
+                })
+                put("truncated", JsonPrimitive(false))
             })
             "items.manifest" -> FakeTransport.reply(id, buildJsonObject {
                 put("items", buildJsonArray {
@@ -322,6 +348,33 @@ class AgentClientTest {
         val params = McctlJson.parseToJsonElement(t.sent.first { it.contains("\"recipes.search\"") })
             .jsonObject["params"]!!.jsonObject
         assertEquals(100, params["offset"]?.jsonPrimitive?.int)
+    }
+
+    @Test
+    fun `recipes search craftable forwards the flag and player`() = runTest {
+        val t = agent()
+        val client = AgentClient(t, backgroundScope).also { it.open() }
+        val res = client.recipesSearch("", craftable = true, player = "GLEYSSON")
+        assertTrue(res.recipes.isEmpty())   // fixture returns nothing once craftable=true
+        val params = McctlJson.parseToJsonElement(t.sent.first { it.contains("\"recipes.search\"") })
+            .jsonObject["params"]!!.jsonObject
+        assertEquals(true, params["craftable"]?.jsonPrimitive?.content?.toBoolean())
+        assertEquals("GLEYSSON", params["player"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `recipes cost decodes base materials leftovers and steps`() = runTest {
+        val client = AgentClient(agent(), backgroundScope).also { it.open() }
+        val cb = client.recipesCost("minecraft:chest", count = 1)
+        assertEquals("minecraft:chest", cb.targetItem)
+        assertEquals(2, cb.base["minecraft:oak_log"])
+        assertEquals(1, cb.leftovers["minecraft:oak_planks"])
+        assertFalse(cb.truncated)
+        assertEquals(2, cb.steps.size)
+        // the intermediates view drops the depth-0 target
+        assertEquals(1, cb.intermediates.size)
+        assertEquals("minecraft:oak_planks", cb.intermediates[0].item)
+        assertEquals(2, cb.intermediates[0].crafts)
     }
 
     @Test

@@ -388,6 +388,36 @@ data class CraftResult(
     val detail: String = "",
 )
 
+/** One node of a `recipes.cost` tree: [crafts] of [recipeId] make [produced] ([each] each). */
+@Serializable
+data class CostStep(
+    val item: String = "",
+    val recipeId: String = "",
+    val each: Int = 1,
+    val crafts: Int = 0,
+    val produced: Int = 0,
+    val depth: Int = 0,
+)
+
+/**
+ * The `recipes.cost` payload — EMI's recipe-tree cost. [base] is the raw materials to gather
+ * (id → count), [leftovers] the surplus from over-producing intermediates, and [steps] every
+ * craft (the target at depth 0, intermediates deeper). [truncated] means a cycle/depth limit
+ * stopped the expansion, so the figures are a floor.
+ */
+@Serializable
+data class CostBreakdown(
+    val targetItem: String = "",
+    val targetCount: Int = 0,
+    val base: Map<String, Int> = emptyMap(),
+    val leftovers: Map<String, Int> = emptyMap(),
+    val steps: List<CostStep> = emptyList(),
+    val truncated: Boolean = false,
+) {
+    /** Intermediate crafts only (everything below the target), shallow → deep. */
+    val intermediates: List<CostStep> get() = steps.filter { it.depth > 0 }
+}
+
 // ----------------------------------------------------------------- items / icons
 
 /**
