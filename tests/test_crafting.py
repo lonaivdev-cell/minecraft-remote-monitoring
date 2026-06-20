@@ -28,6 +28,33 @@ TAGGED = {
     "result": {"id": "minecraft:sign", "count": 3},   # 1.20.5 "id" spelling
 }
 
+SMELT_IRON = {
+    "type": "minecraft:smelting",
+    "ingredient": {"item": "minecraft:raw_iron"},
+    "result": "minecraft:iron_ingot",
+    "experience": 0.7, "cookingtime": 200,
+}
+
+STONECUT_BRICKS = {   # 1.21 spelling: count lives in the result object
+    "type": "minecraft:stonecutting",
+    "ingredient": "minecraft:stone",
+    "result": {"id": "minecraft:stone_bricks", "count": 1},
+}
+
+STONECUT_LEGACY = {   # ≤1.20 spelling: result is a string + top-level count
+    "type": "minecraft:stonecutting",
+    "ingredient": {"item": "minecraft:andesite"},
+    "result": "minecraft:andesite_stairs", "count": 1,
+}
+
+SMITHING_NETHERITE = {
+    "type": "minecraft:smithing_transform",
+    "template": {"item": "minecraft:netherite_upgrade_smithing_template"},
+    "base": {"item": "minecraft:diamond_sword"},
+    "addition": {"item": "minecraft:netherite_ingot"},
+    "result": {"id": "minecraft:netherite_sword"},
+}
+
 
 # ----------------------------------------------------------------- pure parsing
 
@@ -57,9 +84,52 @@ def test_parse_tags_and_alternatives_and_id_result():
     assert reqs[("minecraft:stick", "minecraft:bamboo")] == 1
 
 
-def test_non_crafting_recipe_is_skipped():
-    assert crafting.parse_recipe({"type": "minecraft:smelting",
-                                  "result": "minecraft:iron_ingot"}, "x") is None
+def test_parse_smelting_carries_cook_metadata():
+    rec = crafting.parse_recipe(SMELT_IRON, "minecraft:iron_ingot")
+    assert rec.rtype == "smelting" and rec.category == "smelting"
+    assert rec.result_item == "minecraft:iron_ingot" and rec.result_count == 1
+    assert rec.cooking_time == 200 and rec.experience == 0.7
+    assert rec.requirements() == [(["minecraft:raw_iron"], 1)]
+
+
+def test_parse_stonecutting_both_count_spellings():
+    rec = crafting.parse_recipe(STONECUT_BRICKS, "minecraft:stonecutting/stone_bricks")
+    assert rec.rtype == "stonecutting" and rec.category == "stonecutting"
+    assert rec.result_item == "minecraft:stone_bricks" and rec.result_count == 1
+    legacy = crafting.parse_recipe(STONECUT_LEGACY, "minecraft:stonecutting/andesite_stairs")
+    assert legacy.result_item == "minecraft:andesite_stairs" and legacy.result_count == 1
+    assert legacy.requirements() == [(["minecraft:andesite"], 1)]
+
+
+def test_parse_smithing_transform_three_inputs():
+    rec = crafting.parse_recipe(SMITHING_NETHERITE, "minecraft:netherite_sword_smithing")
+    assert rec.rtype == "smithing" and rec.category == "smithing"
+    assert rec.result_item == "minecraft:netherite_sword"
+    reqs = dict((tuple(p), n) for p, n in rec.requirements())
+    assert reqs[("minecraft:diamond_sword",)] == 1
+    assert reqs[("minecraft:netherite_ingot",)] == 1
+    assert reqs[("minecraft:netherite_upgrade_smithing_template",)] == 1
+
+
+def test_to_dict_has_category_and_cook_fields_additively():
+    smelt = crafting.parse_recipe(SMELT_IRON, "minecraft:iron_ingot").to_dict()
+    assert smelt["category"] == "smelting"
+    assert smelt["cooking_time"] == 200 and smelt["experience"] == 0.7
+    # a plain craft stays lean: the cook-only keys are omitted, not zeroed
+    chest = crafting.parse_recipe(SHAPED_CHEST, "minecraft:chest").to_dict()
+    assert chest["category"] == "crafting"
+    assert "cooking_time" not in chest and "experience" not in chest
+
+
+def test_unsupported_recipe_type_is_skipped():
+    # a mod's bespoke machine recipe isn't a vanilla data-driven type
+    assert crafting.parse_recipe({"type": "create:mixing",
+                                  "result": "create:andesite_alloy"}, "x") is None
+    # smithing_trim has no item result (it's cosmetic) -> nothing to reproduce
+    assert crafting.parse_recipe({"type": "minecraft:smithing_trim",
+                                  "template": {"item": "minecraft:coast_armor_trim_smithing_template"},
+                                  "base": {"item": "minecraft:iron_chestplate"},
+                                  "addition": {"item": "minecraft:redstone"}}, "x") is None
 
 
 def test_listing_framing_and_dedup():

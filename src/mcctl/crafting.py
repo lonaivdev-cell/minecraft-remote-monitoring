@@ -43,7 +43,35 @@ from .transport import BaseTransport, q
 
 log = util.get_logger("crafting")
 
-CRAFT_TYPES = ("minecraft:crafting_shaped", "minecraft:crafting_shapeless")
+CRAFT_SHAPED = "minecraft:crafting_shaped"
+CRAFT_SHAPELESS = "minecraft:crafting_shapeless"
+
+# The single-ingredient "cook" family: vanilla recipe type id -> our short rtype.
+COOKING_TYPES = {
+    "minecraft:smelting": "smelting",
+    "minecraft:blasting": "blasting",
+    "minecraft:smoking": "smoking",
+    "minecraft:campfire_cooking": "campfire",
+}
+
+# Every vanilla *data-driven* recipe type we render, EMI-style. Mod machine
+# recipes (create:mixing, mekanism:*, …) use bespoke types + per-mod plugins —
+# exactly like EMI needs an addon to show them — so they're out of scope here.
+RECIPE_TYPES = (
+    CRAFT_SHAPED, CRAFT_SHAPELESS, *COOKING_TYPES,
+    "minecraft:stonecutting", "minecraft:smithing_transform",
+)
+
+# short rtype -> the high-level category the UI groups by (its EMI "tab").
+_CATEGORY = {
+    "shaped": "crafting", "shapeless": "crafting",
+    "smelting": "smelting", "blasting": "blasting",
+    "smoking": "smoking", "campfire": "campfire",
+    "stonecutting": "stonecutting", "smithing": "smithing",
+}
+
+# Back-compat alias for callers that only meant the crafting-grid pair.
+CRAFT_TYPES = (CRAFT_SHAPED, CRAFT_SHAPELESS)
 
 # A Minecraft username: 1-16 of [A-Za-z0-9_]. Validated before it ever reaches a
 # console command so a player name can never smuggle in extra console syntax.
@@ -62,12 +90,15 @@ class CraftError(RuntimeError):
 @dataclass(slots=True)
 class Recipe:
     rid: str                       # "minecraft:chest"
-    rtype: str                     # "shaped" | "shapeless"
+    rtype: str                     # "shaped"|"shapeless"|"smelting"|…|"smithing"
     result_item: str               # "minecraft:chest"
     result_count: int              # 1
-    slots: list[list[str]]         # one entry per non-empty grid slot; each = OK predicates
+    slots: list[list[str]]         # one entry per non-empty input slot; each = OK predicates
     pattern: list[str] = field(default_factory=list)  # shaped rows, for display ("" rows ok)
     source: str = ""               # jar / datapack it came from
+    category: str = "crafting"     # EMI-style tab: crafting|smelting|…|smithing
+    cooking_time: int = 0          # ticks to cook (cook family only; 0 otherwise)
+    experience: float = 0.0        # xp granted (cook family only; 0 otherwise)
 
     def requirements(self) -> list[tuple[list[str], int]]:
         """Distinct ingredient -> how many of it one craft consumes."""
@@ -75,13 +106,19 @@ class Recipe:
         return [(list(preds), n) for preds, n in sorted(counts.items())]
 
     def to_dict(self) -> dict:
-        return {
-            "id": self.rid, "type": self.rtype, "source": self.source,
+        d = {
+            "id": self.rid, "type": self.rtype, "category": self.category,
+            "source": self.source,
             "result_item": self.result_item, "result_count": self.result_count,
             "pattern": self.pattern,
             "ingredients": [{"options": preds, "per_craft": n}
                             for preds, n in self.requirements()],
         }
+        if self.cooking_time:
+            d["cooking_time"] = self.cooking_time
+        if self.experience:
+            d["experience"] = self.experience
+        return d
 
 
 def _ingredient_predicates(entry: object) -> list[str]:
@@ -124,16 +161,34 @@ def _result_of(d: dict) -> tuple[str, int]:
 
 
 def parse_recipe(d: dict, rid: str, source: str = "") -> Recipe | None:
-    """Build a Recipe from raw recipe JSON, or None if it isn't a crafting recipe."""
+    """Build a Recipe from raw recipe JSON, or None if it isn't a type we render.
+
+    Covers every vanilla data-driven category EMI shows: the crafting grid
+    (shaped/shapeless), the cook family (smelting/blasting/smoking/campfire),
+    stonecutting, and smithing-transform. Each ends up as the same `Recipe`
+    (inputs as `slots`, one output), so the plan/craft engine works for all of
+    them unchanged — a "smelt" or "stonecut" reproduces its outcome with the
+    same survival-honest /clear+/give as a craft does.
+    """
     rtype = d.get("type", "")
-    if rtype not in CRAFT_TYPES:
-        return None
+    if rtype in (CRAFT_SHAPED, CRAFT_SHAPELESS):
+        return _parse_crafting(d, rid, source, rtype)
+    if rtype in COOKING_TYPES:
+        return _parse_cooking(d, rid, source, rtype)
+    if rtype == "minecraft:stonecutting":
+        return _parse_stonecutting(d, rid, source)
+    if rtype == "minecraft:smithing_transform":
+        return _parse_smithing(d, rid, source)
+    return None
+
+
+def _parse_crafting(d: dict, rid: str, source: str, rtype: str) -> Recipe | None:
     result_item, result_count = _result_of(d)
     if not result_item:
         return None
     slots: list[list[str]] = []
     pattern: list[str] = []
-    if rtype == "minecraft:crafting_shaped":
+    if rtype == CRAFT_SHAPED:
         key = d.get("key", {})
         pattern = [str(r) for r in d.get("pattern", [])]
         for row in pattern:
@@ -150,24 +205,71 @@ def parse_recipe(d: dict, rid: str, source: str = "") -> Recipe | None:
                 slots.append(preds)
     if not slots:
         return None
-    short = "shaped" if rtype.endswith("shaped") else "shapeless"
+    short = "shaped" if rtype == CRAFT_SHAPED else "shapeless"
     return Recipe(rid=rid, rtype=short, result_item=result_item,
-                  result_count=result_count, slots=slots, pattern=pattern, source=source)
+                  result_count=result_count, slots=slots, pattern=pattern,
+                  source=source, category="crafting")
+
+
+def _parse_cooking(d: dict, rid: str, source: str, rtype: str) -> Recipe | None:
+    preds = _ingredient_predicates(d.get("ingredient"))
+    result_item, _ = _result_of(d)               # cook output is always 1
+    if not preds or not result_item:
+        return None
+    short = COOKING_TYPES[rtype]
+    return Recipe(rid=rid, rtype=short, result_item=result_item, result_count=1,
+                  slots=[preds], source=source, category=_CATEGORY[short],
+                  cooking_time=int(d.get("cookingtime", 0) or 0),
+                  experience=float(d.get("experience", 0) or 0))
+
+
+def _parse_stonecutting(d: dict, rid: str, source: str) -> Recipe | None:
+    preds = _ingredient_predicates(d.get("ingredient"))
+    result_item, count = _result_of(d)
+    if isinstance(d.get("result"), str):          # legacy: count is top-level
+        count = int(d.get("count", 1) or 1)
+    if not preds or not result_item:
+        return None
+    return Recipe(rid=rid, rtype="stonecutting", result_item=result_item,
+                  result_count=count, slots=[preds], source=source,
+                  category="stonecutting")
+
+
+def _parse_smithing(d: dict, rid: str, source: str) -> Recipe | None:
+    result_item, count = _result_of(d)
+    if not result_item:                           # smithing_trim has no item result -> skip
+        return None
+    slots: list[list[str]] = []
+    for k in ("template", "base", "addition"):
+        preds = _ingredient_predicates(d.get(k))
+        if preds:
+            slots.append(preds)
+    if not slots:
+        return None
+    return Recipe(rid=rid, rtype="smithing", result_item=result_item,
+                  result_count=count, slots=slots, source=source,
+                  category="smithing")
 
 
 # ================================================================ remote listing
 
-# Walks mod jars + world datapacks server-side and prints one TSV line per crafting
+# Walks mod jars + world datapacks server-side and prints one TSV line per
 # recipe: "==R<TAB>source<TAB>rid<TAB>result_item<TAB>compact_json". Datapacks are
-# scanned first so a datapack override wins the de-dup. Filtering by `query` and
-# capping at `limit` happen here to keep the payload small even on huge packs.
+# scanned first so a datapack override wins the de-dup. Filtering by `query`,
+# skipping `offset` matches and capping at `limit` happen here so a client can
+# page the whole pack without ever shipping more than one screenful at a time.
 _PY_RECIPE_LISTER = r'''
 import json, os, sys, zipfile
 
 mods_dir, packs_dir, query, limit = sys.argv[1], sys.argv[2], sys.argv[3].lower(), int(sys.argv[4])
-CRAFT = ("minecraft:crafting_shaped", "minecraft:crafting_shapeless")
+offset = int(sys.argv[5]) if len(sys.argv) > 5 else 0
+CRAFT = ("minecraft:crafting_shaped", "minecraft:crafting_shapeless",
+         "minecraft:smelting", "minecraft:blasting", "minecraft:smoking",
+         "minecraft:campfire_cooking", "minecraft:stonecutting",
+         "minecraft:smithing_transform")
 seen = set()
 emitted = [0]
+hits = [0]
 truncated = [False]
 
 def rid_from(rel):
@@ -189,9 +291,6 @@ def result_id(d):
     return ""
 
 def consider(source, rel, data):
-    if emitted[0] >= limit:
-        truncated[0] = True
-        return
     rid = rid_from(rel)
     if not rid or rid in seen:
         return
@@ -206,7 +305,13 @@ def consider(source, rel, data):
         return
     if query and query not in (rid.lower() + " " + res.lower()):
         return
-    seen.add(rid)
+    seen.add(rid)                       # dedup before paging so offset is stable
+    hits[0] += 1
+    if hits[0] <= offset:               # this match belongs to an earlier page
+        return
+    if emitted[0] >= limit:
+        truncated[0] = True
+        return
     compact = json.dumps(d, separators=(",", ":")).replace("\t", " ").replace("\n", " ")
     sys.stdout.write("==R\t%s\t%s\t%s\t%s\n" % (source, rid, res, compact))
     emitted[0] += 1
@@ -284,14 +389,19 @@ def parse_recipe_listing(out: str) -> tuple[list[Recipe], bool]:
 
 
 def search_recipes(t: BaseTransport, cfg: Config, query: str = "",
-                   limit: int = 60) -> tuple[list[Recipe], bool]:
-    """Crafting recipes whose id/result match `query` (substring), newest-pack-wins."""
-    limit = max(1, min(int(limit), 500))
+                   limit: int = 60, offset: int = 0) -> tuple[list[Recipe], bool]:
+    """Recipes whose id/result match `query` (substring), newest-pack-wins.
+
+    `offset` skips that many matches first, so a client can page the entire pack
+    (empty query) into an offline cache, EMI-style, a screenful per round-trip.
+    """
+    limit = max(1, min(int(limit), 5000))
+    offset = max(0, int(offset))
     script = (
         f"mods={q(cfg.server.server_dir + '/mods')}\n"
         f"packs={q(_datapacks_dir(cfg))}\n"
         "command -v python3 >/dev/null 2>&1 || { echo '==NOPY'; exit 0; }\n"
-        f"python3 - \"$mods\" \"$packs\" {q(query)} {q(str(limit))} <<'MCCTL_PY'\n"
+        f"python3 - \"$mods\" \"$packs\" {q(query)} {q(str(limit))} {q(str(offset))} <<'MCCTL_PY'\n"
         f"{_PY_RECIPE_LISTER}\nMCCTL_PY\n"
     )
     r = t.run(script, timeout=120)
@@ -740,6 +850,11 @@ def render_recipe(rec: Recipe) -> str:
         lines.append("  pattern:")
         for row in rec.pattern:
             lines.append(f"    | {row} |")
+    if rec.cooking_time:
+        cook = f"  cook: {rec.cooking_time / 20:g}s"
+        if rec.experience:
+            cook += f", {rec.experience:g} xp"
+        lines.append(cook)
     lines.append("  needs per craft:")
     for preds, n in rec.requirements():
         lines.append(f"    {n}x  {' / '.join(preds)}")

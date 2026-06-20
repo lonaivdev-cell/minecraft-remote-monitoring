@@ -21,7 +21,8 @@ src/mcctl/        the Python core + every surface
   console.py      RCON-over-tunnel → tmux+log fallback
   server.py       status probe + start/stop/restart state machine
   agent.py        `mcctl agent` JSON-RPC 2.0 server over stdio (the phone's contract)
-  crafting.py     recipe browser (jar+datapack scan) + survival command-craft engine
+  crafting.py     recipe browser (jar+datapack scan, all EMI categories) + command-craft engine
+  assets.py       EMI-style item index: lang display names + model→icon resolution + icon PNG fetch
   gui_app.py      GTK4 + libadwaita desktop app (single SSH worker thread)
   …               backup/watchdog/spark/metrics/props/players/logs/mods/modconfig/…
 tests/            pytest; FakeTransport + FakeClock, golden schema, integration (real tmux)

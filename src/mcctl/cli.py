@@ -11,6 +11,7 @@ import argparse
 import json
 import sys
 import time
+from pathlib import Path
 
 from rich.console import Console as RichConsole
 from rich.table import Table
@@ -732,6 +733,51 @@ def cmd_recipes(ctx: Ctx) -> int:
     return 2
 
 
+def cmd_items(ctx: Ctx) -> int:
+    from . import assets
+    a = ctx.args
+    sub = a.items_cmd or "list"
+    if sub in ("list", "search"):
+        lang, im, bm = assets.load_assets(ctx.t, ctx.cfg)
+        items = assets.build_manifest(im, bm, lang, query=a.query or "")
+        total = len(items)
+        shown = items[: a.n]
+        if a.json:
+            print(json.dumps({"items": shown, "count": total,
+                              "truncated": total > a.n}, indent=2))
+            return 0
+        if not shown:
+            rc.print(f"[yellow]no items match {a.query!r}[/yellow]")
+            return 0
+        t = Table(title=f"{total} items" + (f" matching {a.query!r}" if a.query else ""))
+        t.add_column("item id", style="bold")
+        t.add_column("name")
+        t.add_column("icon texture", style="dim")
+        for it in shown:
+            t.add_row(it["id"], it["name"], it["icon"] or "—")
+        rc.print(t)
+        if total > a.n:
+            rc.print(f"[dim]…{total - a.n} more — raise -n or narrow the query[/dim]")
+        return 0
+    if sub == "icon":
+        _lang, im, bm = assets.load_assets(ctx.t, ctx.cfg)
+        tex = assets.resolve_icon(a.id, im, bm)
+        if not tex:
+            rc.print(f"[yellow]no icon texture resolves for {a.id} "
+                     "(no item model in the jars/resourcepacks)[/yellow]")
+            return 1
+        data = assets.fetch_icons(ctx.t, ctx.cfg, [tex])
+        png = data.get(assets._norm_id(tex))
+        if not png:
+            rc.print(f"[yellow]icon {tex} not found in the jars/resourcepacks[/yellow]")
+            return 1
+        out = a.out or (a.id.split(":")[-1].split("/")[-1] + ".png")
+        Path(out).write_bytes(png)
+        rc.print(f"[green]wrote[/green] {out}  [dim]({tex}, {len(png)} bytes)[/dim]")
+        return 0
+    return 2
+
+
 def _render_plan(plan) -> None:
     rec = plan.recipe
     rc.print(f"[bold]{rec.rid}[/bold]  [dim]{rec.rtype}[/dim]  ->  "
@@ -1388,6 +1434,23 @@ def build_parser() -> argparse.ArgumentParser:
     rt.add_argument("id", help="tag id, e.g. minecraft:planks (a leading # is optional)")
     rt.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_recipes, recipes_cmd=None, query="", n=60, json=False, id=None)
+
+    sp = sub.add_parser("items", help="EMI-style item index: ids, display names, icon textures")
+    isub = nested(sp, "items_cmd")
+    il = isub.add_parser("list", help="list items (id · name · icon texture)")
+    il.add_argument("query", nargs="?", default="")
+    il.add_argument("-n", type=int, default=200, help="max results")
+    il.add_argument("--json", action="store_true")
+    isr = isub.add_parser("search", help="search items by id or display name")
+    isr.add_argument("query", nargs="?", default="")
+    isr.add_argument("-n", type=int, default=200, help="max results")
+    isr.add_argument("--json", action="store_true")
+    ic = isub.add_parser("icon", help="resolve & download one item's icon PNG")
+    ic.add_argument("id", help="item id, e.g. minecraft:chest")
+    ic.add_argument("-o", "--out", help="output .png path (default: <item>.png)")
+    ic.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_items, items_cmd=None, query="", n=200, json=False,
+                    id=None, out=None)
 
     sp = sub.add_parser("craft",
                         help="survival command-craft: consume materials, give the output")

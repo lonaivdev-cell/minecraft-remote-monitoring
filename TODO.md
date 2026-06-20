@@ -112,6 +112,43 @@ grant output (`/give`), loose-inventory-only so it stays survival-honest.
       (jar+datapack scan, pure-tested merge/recursion); the phone expands a tag
       ingredient on demand, and `mcctl recipes tag <id>` renders the same on the CLI.
 
+### Phase 2.6 — EMI parity: icons, full recipe compat, interactive browser
+Make the phone's recipe browser feel like [EMI](https://emi.dev): real item
+**icons**, an item index searchable by name, **every** vanilla recipe category, and
+click-through (item → recipes that make it / uses). EMI is a *client* mod with the
+resource packs on hand; mcctl is server-side, so the brain reads the same files EMI
+reads (mod jars + `resourcepacks/`) and ships the item index + PNGs down the SSH
+channel for the app to cache and render offline. Decided 2026-06-20:
+**bundle all item PNGs to the phone**, cover **all EMI categories**, backend first.
+
+- [x] **Backend (the brain), tested in this repo — PR #1:**
+  - `crafting.py` now parses every vanilla data-driven category EMI shows —
+    crafting (shaped/shapeless), the cook family (smelting/blasting/smoking/
+    campfire, with cook time + xp), stonecutting, and smithing-transform. The
+    plan/craft engine reproduces each outcome with the same survival-honest
+    `/clear`+`/give`. `search_recipes` gained `offset` so a client can page the
+    whole pack into a cache.
+  - `assets.py` (new): one server-side pass reads `assets/<ns>/lang/en_us.json`
+    and the item/block **models** from the mod jars + `resourcepacks/`; pure,
+    tested resolvers turn that into a manifest (`{id, name, icon}`) — model
+    `parent`-chain walk → representative texture, lang → display name. A second
+    pass returns the icon **PNG bytes** (base64) for offline caching. Resource
+    packs override mods override vanilla (load order), like the recipe/tag scans.
+  - Agent contract (additive, no protocol bump): `items.manifest` (paged item
+    index), `icons.fetch` (PNGs by texture id), `recipes.search` gained `offset`.
+    Golden schema regenerated.
+  - CLI: `mcctl items list|search|icon`.
+- [ ] **Android renderer — PR #2:** an `ItemsScreen` (icon grid, search-by-name)
+      and an EMI-style recipe panel. Needs PNG decode/cache (Compose `BitmapPainter`
+      from cached bytes — no new heavy dep), a one-time sync of manifest + recipes +
+      icons into a local store, and click-through (tap result → its recipe; tap an
+      ingredient → recipes that make it / what uses it, computed over the cached set).
+- [ ] **Vanilla icons:** a server *has* no client `assets/` (mods carry their own).
+      Either drop a client jar / resource pack in `resourcepacks/`, or add an opt-in
+      step that fetches the matching Mojang client jar and extracts `assets/minecraft`.
+- [ ] **Stretch:** favorites, craftable-only filter, recipe-tree cost breakdown
+      (EMI's killer feature — total base materials + leftovers for a deep craft).
+
 ### Phase 3 — polish
 - [ ] spark profiler launcher with result URL → in-app browser.
 - [ ] TPS/heap history charts from `metrics.jsonl` (synced over the RPC).
