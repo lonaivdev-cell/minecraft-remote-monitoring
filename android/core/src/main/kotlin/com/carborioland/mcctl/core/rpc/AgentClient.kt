@@ -4,6 +4,8 @@ import com.carborioland.mcctl.core.model.BackupEntry
 import com.carborioland.mcctl.core.model.Capability
 import com.carborioland.mcctl.core.model.ConfigContent
 import com.carborioland.mcctl.core.model.ConfigFile
+import com.carborioland.mcctl.core.model.CraftPlan
+import com.carborioland.mcctl.core.model.CraftResult
 import com.carborioland.mcctl.core.model.CrashReport
 import com.carborioland.mcctl.core.model.HealthReport
 import com.carborioland.mcctl.core.model.HelloResult
@@ -13,7 +15,10 @@ import com.carborioland.mcctl.core.model.MetricSample
 import com.carborioland.mcctl.core.model.ModInfo
 import com.carborioland.mcctl.core.model.PlayerList
 import com.carborioland.mcctl.core.model.Postmortem
+import com.carborioland.mcctl.core.model.Recipe
+import com.carborioland.mcctl.core.model.RecipeSearch
 import com.carborioland.mcctl.core.model.Status
+import com.carborioland.mcctl.core.model.TagItems
 import com.carborioland.mcctl.core.model.TpsReport
 import com.carborioland.mcctl.core.model.WatchdogEvent
 import com.carborioland.mcctl.core.model.WatchdogState
@@ -272,6 +277,57 @@ class AgentClient(
 
     suspend fun inspect(section: String): InspectorSection =
         decode(callRaw("inspect", obj { put("section", JsonPrimitive(section)) }), InspectorSection.serializer())
+
+    // ------------------------------------------------------------------ recipes / crafting
+
+    /** Search shaped/shapeless crafting recipes (id/result substring) from jars + datapacks. */
+    suspend fun recipesSearch(query: String, limit: Int = 60): RecipeSearch =
+        decode(callRaw("recipes.search", obj {
+            put("query", JsonPrimitive(query)); put("limit", JsonPrimitive(limit))
+        }), RecipeSearch.serializer())
+
+    /** One recipe by exact id (e.g. "minecraft:chest"). */
+    suspend fun recipeGet(id: String): Recipe =
+        callRaw("recipes.get", obj { put("id", JsonPrimitive(id)) })
+            ?.get("recipe")?.takeIf { it != JsonNull }
+            ?.let { McctlJson.decodeFromJsonElement(Recipe.serializer(), it) }
+            ?: throw RpcException(RpcCodes.APP, "no recipe in response")
+
+    /** Resolve a `#tag` ingredient (e.g. "minecraft:planks") to its concrete item ids. */
+    suspend fun recipesTag(tag: String): TagItems =
+        decode(callRaw("recipes.tag", obj { put("tag", JsonPrimitive(tag)) }), TagItems.serializer())
+
+    /**
+     * Plan a craft against live inventory — no mutation. [count] null = hold-to-max;
+     * empty [source]/[receiver] fall back to the server's `[crafting]` config.
+     */
+    suspend fun craftPreview(
+        id: String,
+        count: Int?,
+        source: String = "",
+        receiver: String = "",
+        includeStored: Boolean? = null,
+    ): CraftPlan =
+        decode(callRaw("craft.preview", obj {
+            put("id", JsonPrimitive(id))
+            put("count", count?.let { JsonPrimitive(it) } ?: JsonNull)
+            if (source.isNotBlank()) put("source", JsonPrimitive(source))
+            if (receiver.isNotBlank()) put("receiver", JsonPrimitive(receiver))
+            if (includeStored != null) put("include_stored", JsonPrimitive(includeStored))
+        }), CraftPlan.serializer())
+
+    /**
+     * Craft for real: consume inputs (/clear) + grant the output (/give). Needs the `actions`
+     * capability and is destructive, so it sends confirm:true — gate the user first. [count]
+     * null = hold-to-max (one output stack).
+     */
+    suspend fun craftDo(id: String, count: Int?, source: String = "", receiver: String = ""): CraftResult =
+        decode(callRaw("craft.do", confirmed {
+            put("id", JsonPrimitive(id))
+            put("count", count?.let { JsonPrimitive(it) } ?: JsonNull)
+            if (source.isNotBlank()) put("source", JsonPrimitive(source))
+            if (receiver.isNotBlank()) put("receiver", JsonPrimitive(receiver))
+        }), CraftResult.serializer())
 
     // ------------------------------------------------------------------ mod configs
 

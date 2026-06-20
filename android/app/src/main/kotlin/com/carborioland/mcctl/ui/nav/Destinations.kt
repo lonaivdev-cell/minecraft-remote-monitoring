@@ -9,6 +9,7 @@ import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Extension
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Memory
@@ -48,6 +49,7 @@ enum class Destination(
     Players("players", "Players", Icons.Filled.Group, NavGroup.Manage),
     Backups("backups", "Backups", Icons.Filled.Archive, NavGroup.Manage),
     Mods("mods", "Mods", Icons.Filled.Extension, NavGroup.Manage),
+    Crafting("crafting", "Crafting", Icons.Filled.GridView, NavGroup.Manage),
     ModConfigs("modconfigs", "Mod Configs", Icons.Filled.Edit, NavGroup.Manage),
     Properties("properties", "Properties", Icons.Filled.Tune, NavGroup.Manage),
     Jvm("jvm", "JVM", Icons.Filled.Memory, NavGroup.Manage),

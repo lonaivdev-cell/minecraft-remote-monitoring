@@ -333,6 +333,14 @@
       },
       "summary": "Search shaped/shapeless crafting recipes from the mod jars + datapacks."
     },
+    "recipes.tag": {
+      "capability": null,
+      "destructive": false,
+      "params": {
+        "tag": "str"
+      },
+      "summary": "Resolve a #tag ingredient (e.g. \"minecraft:planks\") to its concrete items."
+    },
     "restart": {
       "capability": "actions",
       "destructive": false,

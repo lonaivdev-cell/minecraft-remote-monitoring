@@ -71,6 +71,55 @@ def test_listing_framing_and_dedup():
     assert {r.rid for r in recipes} == {"mymod:gear", "minecraft:chest"}
 
 
+# ----------------------------------------------------------------- tag resolution
+
+
+def _tag_line(key: str, vals: list, replace: bool = False) -> str:
+    import json as _j
+    raw = _j.dumps(vals, separators=(",", ":"))
+    return f"==G\t{key}\t{'1' if replace else '0'}\t{raw}"
+
+
+def test_parse_tag_listing_merges_across_sources():
+    # vanilla defines two planks, a mod adds a third to the same tag -> union, in order.
+    # (The remote scanner already flattens {"id": x} objects to the string x before emit.)
+    out = "\n".join([
+        _tag_line("minecraft:planks", ["minecraft:oak_planks", "minecraft:spruce_planks"]),
+        _tag_line("minecraft:planks", ["mymod:walnut_planks", "minecraft:oak_planks"]),  # dup ignored
+    ])
+    tags = crafting.parse_tag_listing(out)
+    assert tags["minecraft:planks"] == [
+        "minecraft:oak_planks", "minecraft:spruce_planks", "mymod:walnut_planks",
+    ]
+
+
+def test_parse_tag_listing_replace_resets():
+    out = "\n".join([
+        _tag_line("minecraft:planks", ["minecraft:oak_planks"]),
+        _tag_line("minecraft:planks", ["custom:only_planks"], replace=True),  # datapack override
+    ])
+    tags = crafting.parse_tag_listing(out)
+    assert tags["minecraft:planks"] == ["custom:only_planks"]
+
+
+def test_resolve_tag_map_recurses_and_dedups():
+    tags = {
+        "minecraft:planks": ["minecraft:oak_planks", "#minecraft:non_flammable_wood", "bamboo_planks"],
+        "minecraft:non_flammable_wood": ["minecraft:crimson_planks", "minecraft:oak_planks"],  # dup
+    }
+    # accepts a leading '#' and a namespaceless entry; flattens nested tags, dedup, order kept
+    items = crafting.resolve_tag_map(tags, "#minecraft:planks")
+    assert items == [
+        "minecraft:oak_planks", "minecraft:crimson_planks", "minecraft:bamboo_planks",
+    ]
+
+
+def test_resolve_tag_map_survives_cycles_and_missing():
+    tags = {"a:x": ["#a:y"], "a:y": ["#a:x", "a:thing"]}  # x -> y -> x cycle
+    assert crafting.resolve_tag_map(tags, "a:x") == ["a:thing"]
+    assert crafting.resolve_tag_map(tags, "a:absent") == []
+
+
 # ----------------------------------------------------------------- count helpers
 
 

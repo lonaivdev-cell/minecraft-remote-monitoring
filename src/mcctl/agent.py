@@ -529,6 +529,17 @@ def _recipes_get(srv: AgentServer, params: dict) -> dict:
     return {"recipe": crafting.get_recipe(srv.ctx.t, srv.ctx.cfg, rid).to_dict()}
 
 
+@method("recipes.tag", params={"tag": "str"},
+        summary="Resolve a #tag ingredient (e.g. \"minecraft:planks\") to its concrete items.")
+def _recipes_tag(srv: AgentServer, params: dict) -> dict:
+    from . import crafting
+    tag = params.get("tag", "")
+    if not isinstance(tag, str) or not tag.strip():
+        raise RpcError(INVALID_PARAMS, "tag must be a non-empty string")
+    return {"tag": tag.lstrip("#"),
+            "items": crafting.resolve_tag(srv.ctx.t, srv.ctx.cfg, tag)}
+
+
 @method("craft.preview",
         params={"id": "str", "count": "int|null", "source": "str", "receiver": "str",
                 "include_stored": "bool"},

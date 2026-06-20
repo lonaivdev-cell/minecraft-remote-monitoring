@@ -315,6 +315,170 @@ def get_recipe(t: BaseTransport, cfg: Config, rid: str) -> Recipe:
                      + (f" ({len(hits)} partial matches — be more specific)" if hits else ""))
 
 
+# ================================================================ tag resolution
+
+# A `#tag` ingredient (e.g. `#minecraft:planks`) is consumed/counted natively by the
+# `/clear` predicate, but it reads opaquely in a UI ingredient list. This resolves a tag
+# to the concrete items it stands for, by scanning the same jars + datapacks the recipe
+# browser does for `data/<ns>/tags/item(s)/<path>.json`. Item tags merge across every
+# source (vanilla + mods + datapacks all add to `minecraft:planks`) and an entry may be
+# `#another:tag`, so the merge/recursion lives in the *pure*, tested half; the remote
+# script only emits one TSV line per item-tag file it finds:
+#   ==G<TAB><ns>:<path><TAB><replace 0|1><TAB><compact json array of string entries>
+# Mods are scanned first, datapacks last, so a datapack's `"replace": true` wins.
+_PY_TAG_LISTER = r'''
+import json, os, sys, zipfile
+
+mods_dir, packs_dir = sys.argv[1], sys.argv[2]
+
+def key_from(rel):
+    # data/<ns>/tags/item(s)/<path>.json -> "<ns>:<path>"
+    parts = rel.split("/")
+    if len(parts) < 5 or parts[0] != "data" or parts[2] != "tags":
+        return None
+    if parts[3] not in ("item", "items") or not parts[-1].endswith(".json"):
+        return None
+    return parts[1] + ":" + "/".join(parts[4:])[:-5]
+
+def emit(rel, data):
+    k = key_from(rel)
+    if not k:
+        return
+    try:
+        d = json.loads(data)
+    except Exception:
+        return
+    if not isinstance(d, dict):
+        return
+    vals = []
+    for v in d.get("values", []):
+        if isinstance(v, str):
+            vals.append(v)
+        elif isinstance(v, dict):
+            x = v.get("id")
+            if isinstance(x, str):
+                vals.append(x)
+    rep = "1" if d.get("replace") else "0"
+    sys.stdout.write("==G\t%s\t%s\t%s\n" % (k, rep, json.dumps(vals, separators=(",", ":"))))
+
+def scan_zip(path):
+    try:
+        z = zipfile.ZipFile(path)
+    except Exception:
+        return
+    for n in z.namelist():
+        if n.startswith("data/") and n.endswith(".json") and "/tags/item" in n:
+            try:
+                emit(n, z.read(n))
+            except Exception:
+                pass
+
+def scan_dir(root):
+    for dirpath, _dirs, files in os.walk(root):
+        for f in files:
+            if not f.endswith(".json"):
+                continue
+            full = os.path.join(dirpath, f)
+            rel = os.path.relpath(full, root).replace(os.sep, "/")
+            if "/tags/item" in "/" + rel:
+                try:
+                    with open(full, "rb") as fh:
+                        emit(rel, fh.read())
+                except Exception:
+                    pass
+
+# mods first, datapacks last (so a datapack "replace" overrides), matching load order
+if os.path.isdir(mods_dir):
+    for entry in sorted(os.listdir(mods_dir)):
+        if entry.endswith(".jar"):
+            scan_zip(os.path.join(mods_dir, entry))
+if os.path.isdir(packs_dir):
+    for entry in sorted(os.listdir(packs_dir)):
+        p = os.path.join(packs_dir, entry)
+        if os.path.isdir(p):
+            scan_dir(p)
+        elif entry.endswith(".zip"):
+            scan_zip(p)
+'''
+
+
+def _norm_item(entry: str) -> str:
+    """A bare item id gains the default `minecraft:` namespace; tags keep their `#`."""
+    if entry.startswith("#") or ":" in entry:
+        return entry
+    return "minecraft:" + entry
+
+
+def parse_tag_listing(out: str) -> dict[str, list[str]]:
+    """Merge the ==G stream into `{"ns:path": [entry, …]}` in emit (load) order.
+
+    Item tags are additive across sources; a file with `"replace": true` resets the
+    tag it owns before its values apply. Entries stay raw (`#nested:tag` kept) — the
+    recursion into concrete items happens in `resolve_tag_map`.
+    """
+    tags: dict[str, list[str]] = {}
+    for line in out.splitlines():
+        if not line.startswith("==G\t"):
+            continue
+        parts = line[4:].split("\t", 2)
+        if len(parts) != 3:
+            continue
+        key, replace, raw = parts
+        try:
+            vals = json.loads(raw)
+        except ValueError:
+            continue
+        if not isinstance(vals, list):
+            continue
+        cur = [] if (replace == "1" or key not in tags) else tags[key]
+        for v in vals:
+            if isinstance(v, str) and v not in cur:
+                cur.append(v)
+        tags[key] = cur
+    return tags
+
+
+def resolve_tag_map(tags: dict[str, list[str]], tag: str) -> list[str]:
+    """Expand one tag to its concrete item ids, following nested `#tags`, cycle-safe."""
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def walk(name: str) -> None:
+        name = name.lstrip("#")
+        if ":" not in name:
+            name = "minecraft:" + name
+        if name in seen:
+            return
+        seen.add(name)
+        for entry in tags.get(name, []):
+            if entry.startswith("#"):
+                walk(entry)
+            else:
+                item = _norm_item(entry)
+                if item not in out:
+                    out.append(item)
+
+    walk(tag)
+    return out
+
+
+def resolve_tag(t: BaseTransport, cfg: Config, tag: str) -> list[str]:
+    """Concrete items a `#tag` ingredient stands for (e.g. `#minecraft:planks`)."""
+    script = (
+        f"mods={q(cfg.server.server_dir + '/mods')}\n"
+        f"packs={q(_datapacks_dir(cfg))}\n"
+        "command -v python3 >/dev/null 2>&1 || { echo '==NOPY'; exit 0; }\n"
+        f"python3 - \"$mods\" \"$packs\" <<'MCCTL_PY'\n"
+        f"{_PY_TAG_LISTER}\nMCCTL_PY\n"
+    )
+    r = t.run(script, timeout=120)
+    if "==NOPY" in r.out:
+        raise CraftError("the server has no python3 — tag resolution needs it "
+                         "(same requirement as `mcctl mods`)")
+    tags = parse_tag_listing(util.sanitize_terminal(r.out))
+    return resolve_tag_map(tags, tag)
+
+
 # ================================================================ inventory probing
 
 
@@ -415,6 +579,7 @@ class CraftPlan:
     ingredients: list[dict]     # per ingredient: options, per_craft, loose, stored
     output_item: str
     output_count: int           # result_count * will_craft
+    hold_ms: int = 3000         # UI hint: hold the craft button this long = craft-max
 
     def to_dict(self) -> dict:
         return {
@@ -424,6 +589,7 @@ class CraftPlan:
             "will_craft": self.will_craft, "limited_by": self.limited_by,
             "ingredients": self.ingredients,
             "output_item": self.output_item, "output_count": self.output_count,
+            "hold_ms": self.hold_ms,
         }
 
 
@@ -486,6 +652,7 @@ def plan_craft(console: Console, cfg: Config, recipe: Recipe, *,
         requested=count, craftable=craftable, cap=cap, will_craft=will,
         limited_by=limited, ingredients=ingredients,
         output_item=recipe.result_item, output_count=recipe.result_count * will,
+        hold_ms=cr.hold_ms,
     )
 
 

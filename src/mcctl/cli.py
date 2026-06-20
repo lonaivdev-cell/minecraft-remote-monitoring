@@ -715,6 +715,20 @@ def cmd_recipes(ctx: Ctx) -> int:
             return 0
         rc.print(crafting.render_recipe(rec))
         return 0
+    if sub == "tag":
+        items = crafting.resolve_tag(ctx.t, ctx.cfg, a.id)
+        name = a.id.lstrip("#")
+        if a.json:
+            print(json.dumps({"tag": name, "items": items}, indent=2))
+            return 0
+        if not items:
+            rc.print(f"[yellow]#{name} resolved to no items "
+                     "(unknown tag, or it only nests empty tags)[/yellow]")
+            return 0
+        rc.print(f"[bold]#{name}[/bold] → {len(items)} item(s)")
+        for it in items:
+            rc.print(f"  {it}")
+        return 0
     return 2
 
 
@@ -1370,6 +1384,9 @@ def build_parser() -> argparse.ArgumentParser:
     rsh = rsub.add_parser("show", help="show one recipe (ingredients + grid)")
     rsh.add_argument("id")
     rsh.add_argument("--json", action="store_true")
+    rt = rsub.add_parser("tag", help="resolve a #tag ingredient to its concrete items")
+    rt.add_argument("id", help="tag id, e.g. minecraft:planks (a leading # is optional)")
+    rt.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_recipes, recipes_cmd=None, query="", n=60, json=False, id=None)
 
     sp = sub.add_parser("craft",

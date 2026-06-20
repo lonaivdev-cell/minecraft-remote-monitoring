@@ -44,7 +44,7 @@ mcctl init  →  mcctl doctor  →  mcctl start  →  mcctl dash
 | `mcctl logs [-f] [crash]` | tail/follow `latest.log` (timestamps auto-converted to your `[ui].timezone`, default São Paulo); list/fetch crash reports (escape-sequence-sanitized) |
 | `mcctl inspect [SECTION] [--learn]` | deep OS/JVM introspection: process tree, /proc internals, every JVM thread, memory maps, fds, sockets, environment, jcmd flags/heap, host PSI — each section has a `--learn` walkthrough explaining what the kernel structures mean |
 | `mcctl mods` | list every mod with id/version/size, metadata read from inside each jar (NeoForge/Forge/Fabric descriptors) |
-| `mcctl recipes [search QUERY\|show ID]` | browse the pack's shaped/shapeless **crafting recipes**, read straight out of the mod jars + world datapacks (one server-side pass, like `mods`); shows ingredients, grid pattern and output |
+| `mcctl recipes [search QUERY\|show ID\|tag ID]` | browse the pack's shaped/shapeless **crafting recipes**, read straight out of the mod jars + world datapacks (one server-side pass, like `mods`); shows ingredients, grid pattern and output. `tag <id>` resolves a `#tag` ingredient (e.g. `minecraft:planks`) to the concrete items it accepts |
 | `mcctl craft ID [--count N\|--max] [--source\|--receiver NAME] [--preview]` | survival **command-craft**: reads your live inventory, consumes the inputs (`/clear`) and grants the output (`/give`). `--max` makes the most your materials allow, capped at one output stack. Only ever consumes *loose* (accessible) inventory, so it can't dupe; `--preview` plans without crafting (see [the honest note below](#command-craft-adapting-pick-a-recipe-it-gets-made)) |
 | `mcctl config [tree\|get\|set\|edit]` | browse & edit the per-mod files under `config/` — `tree` lists them grouped by the owning mod (matched from the jars), `get` prints one, `edit` opens it in `$EDITOR` and re-uploads (TOML/JSON validated before write, atomic, timestamped `.bak`), `set` writes from a file/stdin; `--reload` runs `/reload`, `--restart` does a full apply. Saving relies on NeoForge's config file-watcher to live-reload mods that support it — startup/cached values still need a restart |
 | `mcctl ai [logs\|crash\|mods\|inspect\|ask\|chat]` | AI analysis & multi-turn chat, powered by **Claude or a local LLM via ollama** (`[llm].provider`): review logs, root-cause crash reports, explain what the mods do, teacher-mode walkthroughs, free-form questions, and an interactive `chat` session — all with live server context attached |
@@ -295,9 +295,11 @@ backpack, because it never depends on the GUI — you just have to be online.
   output (`--source` / `--receiver` override per-craft). Configured player names and
   item predicates are charset-validated before they ever reach a console command.
 
-> The phone screen that renders this (a recipe picker + a press-and-hold craft
-> button wired to `craft.preview` / `craft.do`) is the next slice — the server-side
-> brain and the JSON-RPC contract it renders over shipped here. See **[TODO.md](TODO.md)**.
+> The phone now renders this too: the Android **Crafting** screen is a recipe picker
+> over `recipes.search`, a live `craft.preview` plan, and a press-and-hold craft button
+> (tap → `craft.do {count:1}`, hold past `[crafting].hold_ms` → `{count:null}`), with
+> `#tag` ingredients expanded via `recipes.tag`. One brain, three faces. See
+> **[android/README.md](android/README.md)** and **[TODO.md](TODO.md)**.
 
 ## Off-box: push & metrics
 
@@ -335,11 +337,13 @@ faces* — the tested Python core stays the single source of truth.
 It mirrors the desktop GUI: live Overview (status + start/stop/restart/save/backup/
 purge/kill + watchdog arm), TPS/MSPT/heap/RAM/players/load history charts, console,
 log tail, live watchdog event stream, players (whitelist/op/kick/ban), backups
-(create/prune/verify/restore with a typed confirm), mods, validated server.properties
-editor, JVM heap, crash reports + deterministic postmortem, OS/JVM inspect, and the
-spark profiler. The AI page is a deliberate placeholder (an on-device/cloud LLM is a
-later cycle). Security is unchanged: SSH only, a per-device Ed25519 key in the Android
-Keystore, host-key TOFU, and a biometric gate for actions — see
+(create/prune/verify/restore with a typed confirm), mods, a **Crafting** page (search
+the pack's recipes → a live plan against your inventory → **tap to craft one, press-and-hold
+to craft a stack**, honoring `[crafting].hold_ms`; `#tag` ingredients expand to their real
+items), validated server.properties editor, JVM heap, crash reports + deterministic
+postmortem, OS/JVM inspect, and the spark profiler. The AI page is a deliberate placeholder
+(an on-device/cloud LLM is a later cycle). Security is unchanged: SSH only, a per-device
+Ed25519 key in the Android Keystore, host-key TOFU, and a biometric gate for actions — see
 [android/README.md](android/README.md).
 
 ```
