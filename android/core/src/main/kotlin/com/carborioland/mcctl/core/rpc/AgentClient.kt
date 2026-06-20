@@ -9,7 +9,9 @@ import com.carborioland.mcctl.core.model.CraftResult
 import com.carborioland.mcctl.core.model.CrashReport
 import com.carborioland.mcctl.core.model.HealthReport
 import com.carborioland.mcctl.core.model.HelloResult
+import com.carborioland.mcctl.core.model.IconBatch
 import com.carborioland.mcctl.core.model.InspectorSection
+import com.carborioland.mcctl.core.model.ItemManifest
 import com.carborioland.mcctl.core.model.JvmInfo
 import com.carborioland.mcctl.core.model.MetricSample
 import com.carborioland.mcctl.core.model.ModInfo
@@ -20,6 +22,7 @@ import com.carborioland.mcctl.core.model.RecipeSearch
 import com.carborioland.mcctl.core.model.Status
 import com.carborioland.mcctl.core.model.TagItems
 import com.carborioland.mcctl.core.model.TpsReport
+import com.carborioland.mcctl.core.model.VanillaSync
 import com.carborioland.mcctl.core.model.WatchdogEvent
 import com.carborioland.mcctl.core.model.WatchdogState
 import kotlinx.coroutines.CompletableDeferred
@@ -280,10 +283,15 @@ class AgentClient(
 
     // ------------------------------------------------------------------ recipes / crafting
 
-    /** Search shaped/shapeless crafting recipes (id/result substring) from jars + datapacks. */
-    suspend fun recipesSearch(query: String, limit: Int = 60): RecipeSearch =
+    /**
+     * Search recipes (id/result substring) across every category — crafting, the cook family
+     * (smelting/blasting/smoking/campfire), stonecutting and smithing — from jars + datapacks.
+     * [offset] skips that many matches first, so the browser can page the whole pack into a cache.
+     */
+    suspend fun recipesSearch(query: String, limit: Int = 60, offset: Int = 0): RecipeSearch =
         decode(callRaw("recipes.search", obj {
             put("query", JsonPrimitive(query)); put("limit", JsonPrimitive(limit))
+            put("offset", JsonPrimitive(offset))
         }), RecipeSearch.serializer())
 
     /** One recipe by exact id (e.g. "minecraft:chest"). */
@@ -296,6 +304,42 @@ class AgentClient(
     /** Resolve a `#tag` ingredient (e.g. "minecraft:planks") to its concrete item ids. */
     suspend fun recipesTag(tag: String): TagItems =
         decode(callRaw("recipes.tag", obj { put("tag", JsonPrimitive(tag)) }), TagItems.serializer())
+
+    // ------------------------------------------------------------------ items / icons
+
+    /**
+     * The EMI-style item index — id → display name → icon texture id — from the vanilla jar +
+     * mod jars + resourcepacks. Page with [offset]/[limit]; pass each entry's `icon` to
+     * [iconsFetch] for the PNG. [query] filters by id or display name (case-insensitive).
+     */
+    suspend fun itemsManifest(query: String = "", limit: Int = 2000, offset: Int = 0): ItemManifest =
+        decode(callRaw("items.manifest", obj {
+            put("query", JsonPrimitive(query)); put("limit", JsonPrimitive(limit))
+            put("offset", JsonPrimitive(offset))
+        }), ItemManifest.serializer())
+
+    /**
+     * Fetch icon PNGs by texture id (from [itemsManifest]); the wire's base64 is decoded to raw
+     * bytes for `BitmapFactory`. Cache by texture id and only request the ones not cached yet.
+     */
+    suspend fun iconsFetch(textures: List<String>): IconBatch {
+        if (textures.isEmpty()) return IconBatch()
+        val r = callRaw("icons.fetch", obj { put("textures", buildJsonArrayOf(textures)) })
+        val icons = (r?.get("icons") as? JsonObject).orEmpty().mapValues { (_, v) ->
+            java.util.Base64.getDecoder().decode((v as JsonPrimitive).content)
+        }
+        return IconBatch(icons, r?.stringList("missing") ?: emptyList())
+    }
+
+    /**
+     * Download the matching vanilla client jar onto the server (cached, sha1-verified) so vanilla
+     * items gain icons + names. Needs the `actions` capability. [version] empty = auto-detect.
+     */
+    suspend fun assetsSync(version: String = "", force: Boolean = false): VanillaSync =
+        decode(callRaw("assets.sync", obj {
+            if (version.isNotBlank()) put("version", JsonPrimitive(version))
+            put("force", JsonPrimitive(force))
+        }), VanillaSync.serializer())
 
     /**
      * Plan a craft against live inventory — no mutation. [count] null = hold-to-max;

@@ -99,6 +99,35 @@ class AgentClientTest {
                     add(JsonPrimitive("minecraft:oak_planks")); add(JsonPrimitive("minecraft:spruce_planks"))
                 })
             })
+            "items.manifest" -> FakeTransport.reply(id, buildJsonObject {
+                put("items", buildJsonArray {
+                    add(buildJsonObject {
+                        put("id", JsonPrimitive("minecraft:stick")); put("name", JsonPrimitive("Stick"))
+                        put("icon", JsonPrimitive("minecraft:item/stick"))
+                    })
+                    add(buildJsonObject {
+                        put("id", JsonPrimitive("minecraft:chest")); put("name", JsonPrimitive("Chest"))
+                        put("icon", JsonPrimitive("minecraft:block/chest"))
+                    })
+                })
+                put("count", JsonPrimitive(2))
+                put("truncated", JsonPrimitive(false))
+            })
+            "icons.fetch" -> FakeTransport.reply(id, buildJsonObject {
+                put("icons", buildJsonObject {
+                    put("minecraft:item/stick",
+                        JsonPrimitive(java.util.Base64.getEncoder().encodeToString("PNG-STICK".toByteArray())))
+                })
+                put("missing", buildJsonArray { add(JsonPrimitive("minecraft:item/ghost")) })
+            })
+            "assets.sync" -> FakeTransport.reply(id, buildJsonObject {
+                put("version", JsonPrimitive(params["version"]?.jsonPrimitive?.contentOrNull ?: "1.21.1"))
+                put("jar", JsonPrimitive("/opt/minecraft/.mcctl/vanilla/1.21.1.jar"))
+                put("url", JsonPrimitive("https://piston-data.mojang.com/v1/objects/abc/client.jar"))
+                put("sha1", JsonPrimitive("abc123"))
+                put("status", JsonPrimitive("downloaded"))
+                put("ok", JsonPrimitive(true))
+            })
             "craft.preview" -> FakeTransport.reply(id, craftPlanFixture(params))
             "craft.do" ->
                 if ("actions" in extraCaps) FakeTransport.reply(id, buildJsonObject {
@@ -283,6 +312,67 @@ class AgentClientTest {
         val t = client.recipesTag("#minecraft:planks")
         assertEquals("minecraft:planks", t.tag)
         assertEquals(listOf("minecraft:oak_planks", "minecraft:spruce_planks"), t.items)
+    }
+
+    @Test
+    fun `recipes search forwards offset for paging`() = runTest {
+        val t = agent()
+        val client = AgentClient(t, backgroundScope).also { it.open() }
+        client.recipesSearch("", limit = 50, offset = 100)
+        val params = McctlJson.parseToJsonElement(t.sent.first { it.contains("\"recipes.search\"") })
+            .jsonObject["params"]!!.jsonObject
+        assertEquals(100, params["offset"]?.jsonPrimitive?.int)
+    }
+
+    @Test
+    fun `recipe decodes all-category fields with cook metadata`() {
+        val json = """{"id":"minecraft:iron","type":"smelting","category":"smelting",
+            "result_item":"minecraft:iron_ingot","result_count":1,"cooking_time":200,
+            "experience":0.7,"ingredients":[{"options":["minecraft:raw_iron"],"per_craft":1}]}"""
+        val r = McctlJson.decodeFromJsonElement(
+            com.carborioland.mcctl.core.model.Recipe.serializer(), McctlJson.parseToJsonElement(json))
+        assertEquals("smelting", r.category)
+        assertTrue(r.cooks)
+        assertEquals(10.0, r.cookSeconds, 0.001)
+        assertEquals(0.7, r.experience, 0.001)
+        assertFalse(r.shaped)
+    }
+
+    @Test
+    fun `items manifest decodes entries count and icon texture`() = runTest {
+        val client = AgentClient(agent(), backgroundScope).also { it.open() }
+        val m = client.itemsManifest(query = "")
+        assertEquals(2, m.count)
+        assertFalse(m.truncated)
+        assertEquals("Stick", m.items[0].name)
+        assertEquals("minecraft:item/stick", m.items[0].icon)
+        assertTrue(m.items[0].hasIcon)
+    }
+
+    @Test
+    fun `icons fetch decodes base64 pngs and reports missing`() = runTest {
+        val client = AgentClient(agent(), backgroundScope).also { it.open() }
+        val batch = client.iconsFetch(listOf("minecraft:item/stick", "minecraft:item/ghost"))
+        assertEquals("PNG-STICK", String(batch.icons["minecraft:item/stick"]!!))
+        assertEquals(listOf("minecraft:item/ghost"), batch.missing)
+    }
+
+    @Test
+    fun `icons fetch short-circuits an empty request`() = runTest {
+        val t = agent()
+        val client = AgentClient(t, backgroundScope).also { it.open() }
+        assertTrue(client.iconsFetch(emptyList()).icons.isEmpty())
+        assertTrue(t.sent.none { it.contains("\"icons.fetch\"") })
+    }
+
+    @Test
+    fun `assets sync decodes the vanilla jar result`() = runTest {
+        val client = AgentClient(agent(), backgroundScope).also { it.open() }
+        val res = client.assetsSync(version = "1.21.1")
+        assertTrue(res.ok)
+        assertEquals("downloaded", res.status)
+        assertEquals("1.21.1", res.version)
+        assertTrue(res.jar.endsWith("1.21.1.jar"))
     }
 
     @Test
