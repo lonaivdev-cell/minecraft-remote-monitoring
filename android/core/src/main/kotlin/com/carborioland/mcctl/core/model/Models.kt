@@ -244,6 +244,111 @@ data class HealthReport(
     val diskTotal: Long? = null,
 )
 
+// ----------------------------------------------------------------- crafting
+
+/**
+ * One ingredient slot of a recipe: the set of acceptable predicates (`options`) and how
+ * many one craft consumes (`perCraft`). A predicate is either a concrete item id
+ * (`minecraft:oak_planks`) or a `#tag` (`#minecraft:planks`) — resolve the latter to real
+ * items with `recipes.tag`. In a [CraftPlan] the live inventory counts are filled in too:
+ * [loose] is what `/clear` could actually consume, [stored] an informational
+ * backpack/container figure (never auto-consumed); both null when read from a plain recipe.
+ */
+@Serializable
+data class Ingredient(
+    val options: List<String> = emptyList(),
+    val perCraft: Int = 0,
+    val loose: Int? = null,
+    val stored: Int? = null,
+) {
+    /** The first predicate, the natural label for the slot. */
+    val primary: String get() = options.firstOrNull().orEmpty()
+
+    /** A `#tag` slot the UI can offer to expand into concrete items via `recipes.tag`. */
+    val tag: String? get() = options.firstOrNull { it.startsWith("#") }?.removePrefix("#")
+}
+
+/**
+ * A shaped/shapeless crafting recipe, read from the mod jars + world datapacks. [pattern]
+ * is the shaped grid as rows of opaque keys (a space is an empty cell) — enough to draw the
+ * grid shape; the concrete inputs are the flattened [ingredients].
+ */
+@Serializable
+data class Recipe(
+    val id: String = "",
+    val type: String = "",
+    val source: String = "",
+    val resultItem: String = "",
+    val resultCount: Int = 1,
+    val pattern: List<String> = emptyList(),
+    val ingredients: List<Ingredient> = emptyList(),
+) {
+    val shaped: Boolean get() = type == "shaped"
+}
+
+/** The `recipes.search` payload: matching recipes plus whether the cap hid more. */
+@Serializable
+data class RecipeSearch(
+    val recipes: List<Recipe> = emptyList(),
+    val truncated: Boolean = false,
+)
+
+/** The `recipes.tag` payload: the concrete items a `#tag` ingredient stands for. */
+@Serializable
+data class TagItems(
+    val tag: String = "",
+    val items: List<String> = emptyList(),
+)
+
+/**
+ * A `craft.preview` plan against live inventory — no mutation. [requested] is the count the
+ * client asked for (null = hold-to-max); [craftable] is the most the loose materials allow
+ * right now; [cap] is the one-output-stack ceiling; [willCraft] is what a `craft.do` with
+ * the same args would actually make, and [limitedBy] says why ("materials" | "stack" |
+ * "request" | "none"). [holdMs] is the server's configured hold-to-max threshold the craft
+ * button must honor (`[crafting].hold_ms`).
+ */
+@Serializable
+data class CraftPlan(
+    val recipe: Recipe = Recipe(),
+    val source: String = "",
+    val receiver: String = "",
+    val online: Boolean = false,
+    val requested: Int? = null,
+    val craftable: Int = 0,
+    val cap: Int = 0,
+    val willCraft: Int = 0,
+    val limitedBy: String = "",
+    val ingredients: List<Ingredient> = emptyList(),
+    val outputItem: String = "",
+    val outputCount: Int = 0,
+    val holdMs: Int = 3000,
+) {
+    /** True when the player is online with at least one craft's worth of loose materials. */
+    val canCraft: Boolean get() = online && craftable >= 1
+}
+
+/** One ingredient `craft.do` actually removed, for the result summary. */
+@Serializable
+data class ConsumedItem(
+    val predicate: String = "",
+    val removed: Int = 0,
+)
+
+/**
+ * The outcome of a real `craft.do`. Anti-dupe by construction: [crafted]/[outputCount] never
+ * exceed what was actually [consumed]; [detail] explains any mid-craft shortfall.
+ */
+@Serializable
+data class CraftResult(
+    val ok: Boolean = false,
+    val crafted: Int = 0,
+    val outputItem: String = "",
+    val outputCount: Int = 0,
+    val consumed: List<ConsumedItem> = emptyList(),
+    val detail: String = "",
+)
+
 /** Capabilities the client may request in `agent.hello`. */
 enum class Capability(val wire: String) {
     /** Lifecycle + console + player + backup actions. */

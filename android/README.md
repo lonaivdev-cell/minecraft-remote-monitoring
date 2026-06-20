@@ -23,6 +23,7 @@ agent method:
 | **Players** | `players.list`, `players.whitelist`/`.op`/`.kick`/`.ban` |
 | **Backups** | `backup.list`/`.create`/`.prune`/`.verify`/`.restore` (typed confirm) |
 | **Mods** | `mods.list` |
+| **Crafting** | `recipes.search`/`.get`/`.tag`, `craft.preview`, `craft.do` (tap = 1, press-and-hold = max; biometric gate) |
 | **Mod Configs** | `config.tree`/`.get`/`.set` (browse by mod, edit in place, save = live-reload + restart) |
 | **Properties** | `props.list`/`.set` (validated) |
 | **JVM** | `jvm.show`/`.heap` |

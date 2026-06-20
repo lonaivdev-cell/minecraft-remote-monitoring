@@ -103,12 +103,14 @@ grant output (`/give`), loose-inventory-only so it stays survival-honest.
 - [x] CLI: `mcctl recipes search|show`, `mcctl craft <id> [--count|--max] [--preview]`.
 - [x] Agent contract: `recipes.search`, `recipes.get`, `craft.preview`, `craft.do`
       (actions + confirm gated), golden-schema regenerated.
-- [ ] **Android screen (the renderer):** recipe picker (search → ingredients/grid),
-      a **press-and-hold (>3s) craft button** → `craft.do {count:null}` (hold-to-max)
-      vs tap → `count:1`, biometric gate like other actions. `[crafting].hold_ms` is
-      the contract value to honor.
-- [ ] Tag display: resolve `#tag` predicates to concrete items for nicer ingredient
-      lists (counting/consuming already handle tags natively via the `/clear` predicate).
+- [x] **Android screen (the renderer):** `CraftingScreen` — recipe picker (search →
+      grid + ingredients), a live `craft.preview` plan, and a **press-and-hold craft
+      button** → `craft.do {count:null}` (hold-to-max) vs tap → `count:1`, with the
+      biometric gate like other actions. `[crafting].hold_ms` is honored — surfaced in
+      the `craft.preview` plan and rendered as the hold threshold.
+- [x] Tag display: `recipes.tag` resolves a `#tag` predicate to its concrete items
+      (jar+datapack scan, pure-tested merge/recursion); the phone expands a tag
+      ingredient on demand, and `mcctl recipes tag <id>` renders the same on the CLI.
 
 ### Phase 3 — polish
 - [ ] spark profiler launcher with result URL → in-app browser.
