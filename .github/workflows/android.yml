@@ -16,8 +16,6 @@ defaults:
     working-directory: android
 
 jobs:
-  # The pure-Kotlin protocol layer (JSON-RPC client, models, Ed25519/OpenSSH). Needs no
-  # Android SDK, so it runs fast and gates the rest.
   core:
     runs-on: ubuntu-latest
     steps:
@@ -26,11 +24,10 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+          cache: "gradle"
       - name: core unit tests
         run: ./gradlew :core:test --no-daemon
 
-  # The Compose app. GitHub runners can reach Google's Maven (unlike the dev sandbox), so
-  # the APK is built here and uploaded as an installable artifact.
   apk:
     runs-on: ubuntu-latest
     needs: core
@@ -40,9 +37,20 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+          cache: "gradle"
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+      - name: Cache Android SDK packages
+        id: cache-sdk
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.ANDROID_HOME }}/platforms/android-35
+            ${{ env.ANDROID_HOME }}/build-tools/35.0.0
+            ${{ env.ANDROID_HOME }}/platform-tools
+          key: android-sdk-35-0-0-${{ runner.os }}
       - name: Install SDK packages
+        if: steps.cache-sdk.outputs.cache-hit != 'true'
         run: yes | sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools" >/dev/null
       - name: Assemble debug APK
         run: ./gradlew :app:assembleDebug --no-daemon
