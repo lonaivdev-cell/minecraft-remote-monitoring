@@ -27,6 +27,7 @@ from dataclasses import fields
 from typing import IO, Any
 
 from . import __version__, events, logs, metrics, state, util
+from .assets import AssetError
 from .backup import BackupEntry, BackupError, BackupManager
 from .config import BackupCfg, CraftingCfg, LlmCfg, MetricsCfg, ServerCfg, UiCfg, WatchdogCfg
 from .console import ConsoleError
@@ -146,7 +147,8 @@ class AgentServer:
         except TransportError as e:
             return self._err(rid, APP_ERROR, str(e), {"exit_code": 3})
         except (ServerError, BackupError, ConsoleError, SparkError, PlayerError,
-                PropError, CraftError, metrics.MetricsError, util.LockHeldError) as e:
+                PropError, CraftError, AssetError, metrics.MetricsError,
+                util.LockHeldError) as e:
             return self._err(rid, APP_ERROR, str(e), {"exit_code": 1})
         except Exception as e:  # noqa: BLE001 - the agent must answer, never die mid-request
             log.exception("internal error handling %s", name)
@@ -509,13 +511,14 @@ def _mods_list(srv: AgentServer, params: dict) -> dict:
     return {"mods": [m.to_dict() for m in M.list_mods(srv.ctx.t, srv.ctx.cfg)]}
 
 
-@method("recipes.search", params={"query": "str", "limit": "int"},
-        summary="Search shaped/shapeless crafting recipes from the mod jars + datapacks.")
+@method("recipes.search", params={"query": "str", "limit": "int", "offset": "int"},
+        summary="Search recipes (crafting/smelting/blasting/smoking/campfire/stonecutting/"
+                "smithing) from the mod jars + datapacks. Page the whole pack with offset.")
 def _recipes_search(srv: AgentServer, params: dict) -> dict:
     from . import crafting
     recipes, truncated = crafting.search_recipes(
         srv.ctx.t, srv.ctx.cfg, query=str(params.get("query", "")),
-        limit=int(params.get("limit", 60)))
+        limit=int(params.get("limit", 60)), offset=int(params.get("offset", 0)))
     return {"recipes": [r.to_dict() for r in recipes], "truncated": truncated}
 
 
@@ -570,6 +573,38 @@ def _craft_do(srv: AgentServer, params: dict) -> dict:
         count=None if count is None else int(count),
         source=params.get("source", ""), receiver=params.get("receiver", ""))
     return res.to_dict()
+
+
+@method("items.manifest", params={"query": "str", "limit": "int", "offset": "int"},
+        summary="EMI-style item index: id → display name → icon texture id, from the "
+                "mod jars + resourcepacks. Page with offset/limit; icon feeds icons.fetch.")
+def _items_manifest(srv: AgentServer, params: dict) -> dict:
+    from . import assets
+    lang, item_models, block_models = assets.load_assets(srv.ctx.t, srv.ctx.cfg)
+    items = assets.build_manifest(item_models, block_models, lang,
+                                  query=str(params.get("query", "")))
+    limit = max(1, min(int(params.get("limit", 2000)), 10000))
+    offset = max(0, int(params.get("offset", 0)))
+    page = items[offset:offset + limit]
+    return {"items": page, "count": len(items),
+            "truncated": offset + limit < len(items)}
+
+
+@method("icons.fetch", params={"textures": "list[str]"},
+        summary="Item icon PNGs (base64) by texture id (from items.manifest), for the "
+                "phone to cache & render offline. Returns {icons:{tex:b64}, missing:[…]}.")
+def _icons_fetch(srv: AgentServer, params: dict) -> dict:
+    import base64 as _b64
+
+    from . import assets
+    texs = params.get("textures") or []
+    if not isinstance(texs, list):
+        raise RpcError(INVALID_PARAMS, "textures must be a list of texture ids")
+    texs = [str(x) for x in texs][:500]
+    data = assets.fetch_icons(srv.ctx.t, srv.ctx.cfg, texs)
+    want = {assets._norm_id(x) for x in texs if x}
+    return {"icons": {k: _b64.b64encode(v).decode() for k, v in data.items()},
+            "missing": sorted(want - set(data))}
 
 
 @method("config.tree", params={"mods": "bool"},

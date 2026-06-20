@@ -169,6 +169,14 @@
       "params": {},
       "summary": "spark memory/disk health."
     },
+    "icons.fetch": {
+      "capability": null,
+      "destructive": false,
+      "params": {
+        "textures": "list[str]"
+      },
+      "summary": "Item icon PNGs (base64) by texture id (from items.manifest), for the phone to cache & render offline. Returns {icons:{tex:b64}, missing:[\u2026]}."
+    },
     "inspect": {
       "capability": null,
       "destructive": false,
@@ -176,6 +184,16 @@
         "section": "str"
       },
       "summary": "Deep OS/JVM introspection of one section."
+    },
+    "items.manifest": {
+      "capability": null,
+      "destructive": false,
+      "params": {
+        "limit": "int",
+        "offset": "int",
+        "query": "str"
+      },
+      "summary": "EMI-style item index: id \u2192 display name \u2192 icon texture id, from the mod jars + resourcepacks. Page with offset/limit; icon feeds icons.fetch."
     },
     "jvm.heap": {
       "capability": "destructive",
@@ -329,9 +347,10 @@
       "destructive": false,
       "params": {
         "limit": "int",
+        "offset": "int",
         "query": "str"
       },
-      "summary": "Search shaped/shapeless crafting recipes from the mod jars + datapacks."
+      "summary": "Search recipes (crafting/smelting/blasting/smoking/campfire/stonecutting/smithing) from the mod jars + datapacks. Page the whole pack with offset."
     },
     "recipes.tag": {
       "capability": null,
