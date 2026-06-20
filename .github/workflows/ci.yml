@@ -10,16 +10,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install tmux (integration tests)
-        run: sudo apt-get update && sudo apt-get install -y tmux
+          cache: "pip"
+
+      - uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: tmux
+          version: 1.0
+
       - name: Install package + dev deps
         run: pip install -e ".[dev]"
+
       - name: Lint
         run: ruff check src tests
+
       - name: Unit tests
         run: pytest -m "not integration" -v
+
       - name: Integration tests (real tmux + fake server)
         run: pytest -m "integration" -v
