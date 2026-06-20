@@ -99,6 +99,8 @@ class Recipe:
     category: str = "crafting"     # EMI-style tab: crafting|smelting|…|smithing
     cooking_time: int = 0          # ticks to cook (cook family only; 0 otherwise)
     experience: float = 0.0        # xp granted (cook family only; 0 otherwise)
+    grid: list[str] = field(default_factory=list)  # row-major cells (primary item id, "" = empty)
+    grid_w: int = 0                # grid width, so an EMI-style grid can be drawn with icons
 
     def requirements(self) -> list[tuple[list[str], int]]:
         """Distinct ingredient -> how many of it one craft consumes."""
@@ -118,6 +120,9 @@ class Recipe:
             d["cooking_time"] = self.cooking_time
         if self.experience:
             d["experience"] = self.experience
+        if self.grid:
+            d["grid"] = self.grid
+            d["grid_w"] = self.grid_w
         return d
 
 
@@ -188,14 +193,17 @@ def _parse_crafting(d: dict, rid: str, source: str, rtype: str) -> Recipe | None
         return None
     slots: list[list[str]] = []
     pattern: list[str] = []
+    grid: list[str] = []
+    grid_w = 0
     if rtype == CRAFT_SHAPED:
         key = d.get("key", {})
         pattern = [str(r) for r in d.get("pattern", [])]
+        grid_w = max((len(r) for r in pattern), default=0)
         for row in pattern:
-            for ch in row:
-                if ch == " ":
-                    continue
-                preds = _ingredient_predicates(key.get(ch))
+            for i in range(grid_w):
+                ch = row[i] if i < len(row) else " "
+                preds = [] if ch == " " else _ingredient_predicates(key.get(ch))
+                grid.append(preds[0] if preds else "")
                 if preds:
                     slots.append(preds)
     else:  # shapeless
@@ -203,12 +211,15 @@ def _parse_crafting(d: dict, rid: str, source: str, rtype: str) -> Recipe | None
             preds = _ingredient_predicates(entry)
             if preds:
                 slots.append(preds)
+        # lay the loose ingredients out left-to-right, up to 3 across (vanilla max 9)
+        grid = [s[0] for s in slots]
+        grid_w = min(3, len(grid)) or 0
     if not slots:
         return None
     short = "shaped" if rtype == CRAFT_SHAPED else "shapeless"
     return Recipe(rid=rid, rtype=short, result_item=result_item,
                   result_count=result_count, slots=slots, pattern=pattern,
-                  source=source, category="crafting")
+                  source=source, category="crafting", grid=grid, grid_w=grid_w)
 
 
 def _parse_cooking(d: dict, rid: str, source: str, rtype: str) -> Recipe | None:

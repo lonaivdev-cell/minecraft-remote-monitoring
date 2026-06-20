@@ -285,6 +285,8 @@ data class Recipe(
     val ingredients: List<Ingredient> = emptyList(),
     val cookingTime: Int = 0,
     val experience: Double = 0.0,
+    val grid: List<String> = emptyList(),
+    val gridW: Int = 0,
 ) {
     val shaped: Boolean get() = type == "shaped"
 
@@ -293,6 +295,34 @@ data class Recipe(
 
     /** Cook time in seconds (20 ticks/s), for display next to the furnace arrow. */
     val cookSeconds: Double get() = cookingTime / 20.0
+
+    /** True when there's a positional crafting grid to draw (shaped/shapeless). */
+    val hasGrid: Boolean get() = grid.isNotEmpty() && gridW > 0
+
+    /** Grid height in rows, derived from [grid]/[gridW]. */
+    val gridH: Int get() = if (gridW > 0) (grid.size + gridW - 1) / gridW else 0
+
+    /** The item id in cell (row, col), or "" for an empty cell / out of range. */
+    fun cell(row: Int, col: Int): String {
+        if (col !in 0 until gridW) return ""
+        return grid.getOrElse(row * gridW + col) { "" }
+    }
+}
+
+/**
+ * A client-side index over a loaded recipe set — the EMI lookup. [makes] are the recipes whose
+ * output is the item; [uses] are the recipes that consume it (matching concrete item options;
+ * `#tag` options would need [com.carborioland.mcctl.core.rpc.AgentClient.recipesTag] to expand).
+ * Pure and order-preserving so a screen can render the result straight away.
+ */
+class RecipeIndex(private val recipes: List<Recipe>) {
+    fun makes(itemId: String): List<Recipe> = recipes.filter { it.resultItem == itemId }
+
+    fun uses(itemId: String): List<Recipe> =
+        recipes.filter { r -> r.ingredients.any { itemId in it.options } }
+
+    /** Every distinct output item across the set, sorted — the basis of an item list. */
+    fun outputs(): List<String> = recipes.map { it.resultItem }.filter { it.isNotBlank() }.distinct().sorted()
 }
 
 /** The `recipes.search` payload: matching recipes plus whether the cap hid more. */

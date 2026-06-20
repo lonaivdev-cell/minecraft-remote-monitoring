@@ -3,6 +3,7 @@ package com.carborioland.mcctl.core.model
 import com.carborioland.mcctl.core.rpc.McctlJson
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ModelsTest {
@@ -36,6 +37,48 @@ class ModelsTest {
         assertEquals(ServerState.ONLINE, Status(running = true, portOpen = true).baseState())
         assertEquals(ServerState.BOOTING, Status(running = true, portOpen = false).baseState())
         assertEquals(ServerState.OFFLINE, Status(running = false).baseState())
+    }
+
+    @Test
+    fun `recipe decodes the positional grid and reads cells safely`() {
+        val json = """{"id":"minecraft:chest","type":"shaped","result_item":"minecraft:chest",
+            "result_count":1,"grid":["minecraft:oak_planks","minecraft:oak_planks","minecraft:oak_planks",
+            "minecraft:oak_planks","","minecraft:oak_planks","minecraft:oak_planks","minecraft:oak_planks",
+            "minecraft:oak_planks"],"grid_w":3}""".trimIndent()
+        val r = McctlJson.decodeFromString(Recipe.serializer(), json)
+        assertTrue(r.hasGrid)
+        assertEquals(3, r.gridW)
+        assertEquals(3, r.gridH)
+        assertEquals("minecraft:oak_planks", r.cell(0, 0))
+        assertEquals("", r.cell(1, 1))          // the hole in the middle is preserved
+        assertEquals("", r.cell(9, 9))          // out of range is empty, never a crash
+    }
+
+    @Test
+    fun `recipe index finds what makes and what uses an item`() {
+        val planks = Recipe(
+            id = "a", resultItem = "minecraft:oak_planks", resultCount = 4,
+            ingredients = listOf(Ingredient(options = listOf("minecraft:oak_log"), perCraft = 1)),
+        )
+        val chest = Recipe(
+            id = "b", resultItem = "minecraft:chest", resultCount = 1,
+            ingredients = listOf(Ingredient(options = listOf("minecraft:oak_planks"), perCraft = 8)),
+        )
+        val sign = Recipe(
+            id = "c", resultItem = "minecraft:sign", resultCount = 3,
+            ingredients = listOf(
+                Ingredient(options = listOf("minecraft:oak_planks"), perCraft = 6),
+                Ingredient(options = listOf("minecraft:stick"), perCraft = 1),
+            ),
+        )
+        val idx = RecipeIndex(listOf(planks, chest, sign))
+        assertEquals(listOf("a"), idx.makes("minecraft:oak_planks").map { it.id })
+        assertEquals(listOf("b", "c"), idx.uses("minecraft:oak_planks").map { it.id })
+        assertEquals(emptyList<String>(), idx.uses("minecraft:diamond").map { it.id })
+        assertEquals(
+            listOf("minecraft:chest", "minecraft:oak_planks", "minecraft:sign"),
+            idx.outputs(),
+        )
     }
 
     @Test
