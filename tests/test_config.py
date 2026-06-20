@@ -47,6 +47,7 @@ def test_unknown_keys_ignored(tmp_path: Path):
     ("[server]\nserver_dir = 'relative/path'", "absolute"),
     ("[backup]\ncompression = 'xz'", "compression"),
     ("[backup]\nkeep_recent = 0", "keep_recent"),
+    ("[backup]\noffsite_mode = 'rsync'", "offsite_mode"),
     ("[watchdog]\ninterval = 1", "interval"),
     ("[llm]\nprovider = 'openai'", "provider"),
     ("[ui]\ntimezone = 'Mars/Olympus'", "timezone"),

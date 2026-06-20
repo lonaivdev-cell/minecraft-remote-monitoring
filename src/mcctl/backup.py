@@ -1,4 +1,5 @@
-"""World backups: consistent snapshots, GFS-style rotation, pull, verify, restore.
+"""World backups: consistent snapshots, GFS-style rotation, pull, verify, restore,
+inspection extract, and an off-site rclone mirror.
 
 Snapshot procedure when the server is up (the only way to get a consistent
 copy of a live world):  save-off  ->  save-all flush  ->  wait "Saved the
@@ -286,3 +287,70 @@ class BackupManager:
         self.t.run(script, timeout=3600, check=True)
         log.warning("restored %s; previous world preserved at %s/%s", name, s.server_dir, aside)
         return aside
+
+    def extract(self, name: str, dest: str) -> str:
+        """Unpack a snapshot into `dest` for side-by-side inspection.
+
+        Unlike restore(), this never touches the live world and works while the
+        server is running — it's a read-only copy for diffing or recovery, and so
+        accepts --full archives too. The archive is integrity-checked first, and
+        the destination must be empty or absent: we never splat over existing data.
+        Returns the destination path (server-side; mcctl drives the box).
+        """
+        b = self.cfg.backup
+        if not dest:
+            raise BackupError("no destination: pass a directory with --to")
+        path = f"{b.remote_dir}/{name}"
+        if not self.t.exists(path):
+            raise BackupError(f"no such backup on server: {name}")
+        if parse_name(b.prefix, name) is None:
+            raise BackupError(f"{name} is not a recognized {b.prefix}-* archive")
+        if not self.verify(name):
+            raise BackupError(f"archive {name} fails integrity check — NOT extracting")
+        unpack = "zstd -dc" if name.endswith(".zst") else "gzip -dc"
+        script = (
+            "set -e -o pipefail\n"
+            f"dest={q(dest)}\n"
+            'if [ -e "$dest" ] && [ -n "$(ls -A -- "$dest" 2>/dev/null)" ]; then\n'
+            '  echo "==NONEMPTY"; exit 3\n'
+            "fi\n"
+            'mkdir -p -- "$dest"\n'
+            f'{unpack} {q(path)} | tar -xf - -C "$dest"\n'
+        )
+        r = self.t.run(script, timeout=3600)
+        if "==NONEMPTY" in r.out:
+            raise BackupError(f"destination {dest} is not empty — pick a fresh directory")
+        if not r.ok:
+            raise BackupError(f"extract failed (rc={r.rc}): {r.err.strip() or 'see server log'}")
+        log.info("extracted %s into %s", name, dest)
+        return dest
+
+    # ---------------------------------------------------------------- off-site mirror
+
+    def offsite_sync(self, *, dry: bool = False,
+                     progress: Callable[[str], None] | None = None) -> dict:
+        """Mirror the local backup dir to an off-site rclone remote (e.g. OCI
+        Object Storage). 'copy' never deletes off-site (archives accumulate);
+        'sync' makes the remote match the already-pruned local set. Only finished
+        ``{prefix}-*.tar.*`` archives are transferred. Returns a summary dict."""
+        b = self.cfg.backup
+        remote = b.offsite_remote.strip()
+        if not remote:
+            raise BackupError("off-site is not configured: set backup.offsite_remote to an "
+                              "rclone target like 'oci:bucket/world'")
+        mode = b.offsite_mode if b.offsite_mode in ("copy", "sync") else "copy"
+        if not self.t.run("command -v rclone >/dev/null 2>&1", timeout=15).ok:
+            raise BackupError("rclone not found on the server — install it (https://rclone.org) "
+                              "and configure the remote with `rclone config`")
+        flags = ["--transfers=4", "--checkers=8", "--include", q(f"{b.prefix}-*.tar.*")]
+        if dry:
+            flags.append("--dry-run")
+        if progress:
+            progress(f"rclone {mode} → {remote}{' (dry-run)' if dry else ''}")
+        script = f"rclone {mode} {q(b.remote_dir)} {q(remote)} {' '.join(flags)} 2>&1\n"
+        r = self.t.run(script, timeout=7200)
+        summary = next((ln.strip() for ln in reversed(r.out.splitlines()) if ln.strip()), "")
+        if not r.ok:
+            raise BackupError(f"rclone {mode} failed (rc={r.rc}): {summary or r.err.strip()}")
+        log.info("off-site %s to %s ok%s", mode, remote, f": {summary}" if summary else "")
+        return {"remote": remote, "mode": mode, "dry": dry, "summary": summary}

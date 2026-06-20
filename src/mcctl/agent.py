@@ -423,6 +423,24 @@ def _backup_restore(srv: AgentServer, params: dict) -> dict:
     return {"ok": True, "previous_world": moved}
 
 
+@method("backup.extract", params={"name": "str", "to": "str"},
+        summary="Unpack a snapshot into a directory for inspection (never touches the live world).",
+        capability="actions")
+def _backup_extract(srv: AgentServer, params: dict) -> dict:
+    bm = BackupManager(srv.ctx.cfg, srv.ctx.t)
+    with util.OpsLock():
+        dest = bm.extract(params["name"], params["to"])
+    return {"ok": True, "dest": dest}
+
+
+@method("backup.offsite", params={"dry": "bool"},
+        summary="Mirror archives to the off-site rclone remote.", capability="actions")
+def _backup_offsite(srv: AgentServer, params: dict) -> dict:
+    bm = BackupManager(srv.ctx.cfg, srv.ctx.t)
+    with util.OpsLock():
+        return bm.offsite_sync(dry=bool(params.get("dry", False)))
+
+
 @method("logs.tail", params={"lines": "int", "crash": "bool", "name": "str"},
         summary="Tail latest.log, or fetch a crash report.")
 def _logs_tail(srv: AgentServer, params: dict) -> dict:
