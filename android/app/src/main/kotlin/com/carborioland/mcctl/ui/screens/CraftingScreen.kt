@@ -262,13 +262,13 @@ private fun IngredientRow(ing: Ingredient, resolved: List<String>?, loading: Boo
             Text("${ing.perCraft}×", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.mc.gold, modifier = Modifier.width(42.dp))
             Column(Modifier.weight(1f).padding(end = 8.dp)) {
                 Text(ingredientLabel(ing), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
-                if (ing.loose != null) {
-                    val enough = ing.loose >= ing.perCraft
+                val loose = ing.loose
+                if (loose != null) {
                     val extra = ing.stored?.takeIf { it > 0 }?.let { " · +$it in storage" } ?: ""
                     Text(
-                        "have ${ing.loose}$extra",
+                        "have $loose$extra",
                         style = MaterialTheme.typography.bodySmall,
-                        color = if (enough) MaterialTheme.mc.success else MaterialTheme.mc.danger,
+                        color = if (loose >= ing.perCraft) MaterialTheme.mc.success else MaterialTheme.mc.danger,
                     )
                 }
             }
