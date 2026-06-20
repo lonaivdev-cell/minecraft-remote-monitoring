@@ -138,11 +138,18 @@ channel for the app to cache and render offline. Decided 2026-06-20:
     index), `icons.fetch` (PNGs by texture id), `recipes.search` gained `offset`.
     Golden schema regenerated.
   - CLI: `mcctl items list|search|icon`.
-- [ ] **Android renderer — PR #2:** an `ItemsScreen` (icon grid, search-by-name)
-      and an EMI-style recipe panel. Needs PNG decode/cache (Compose `BitmapPainter`
-      from cached bytes — no new heavy dep), a one-time sync of manifest + recipes +
-      icons into a local store, and click-through (tap result → its recipe; tap an
-      ingredient → recipes that make it / what uses it, computed over the cached set).
+- [x] **Android `:core` bindings — PR #3:** typed `AgentClient` methods for the new
+      contract — `itemsManifest` (paged), `iconsFetch` (base64→`ByteArray` for
+      `BitmapFactory`), `assetsSync`, and `recipesSearch(offset=…)` for paging — plus
+      models (`ItemEntry`/`ItemManifest`/`IconBatch`/`VanillaSync`) and the `Recipe`
+      fields for the new categories (`category`/`cookingTime`/`experience`). Pure JVM,
+      tested by `:core:test` (no SDK).
+- [ ] **Android UI — PR #4 (the renderer):** an `ItemsScreen` (icon grid, search-by-name)
+      and an EMI-style recipe panel with pictures. Needs a Compose icon cache (decode the
+      cached bytes to `ImageBitmap` — no new heavy dep), a one-time sync of manifest +
+      recipes + icons into a local store, an `assets.sync` "get vanilla icons" affordance,
+      and click-through (tap a result → its recipe; tap an ingredient → recipes that make
+      it / what uses it, computed over the cached set).
 - [x] **Vanilla icons — PR #2:** a server has no client `assets/` (mods carry their
       own), so `assets.py` now fetches the **matching Mojang client jar** and caches it
       where the scans look first (lowest priority — mods/resourcepacks still override).

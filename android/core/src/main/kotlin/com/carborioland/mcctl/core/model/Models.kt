@@ -277,13 +277,22 @@ data class Ingredient(
 data class Recipe(
     val id: String = "",
     val type: String = "",
+    val category: String = "crafting",
     val source: String = "",
     val resultItem: String = "",
     val resultCount: Int = 1,
     val pattern: List<String> = emptyList(),
     val ingredients: List<Ingredient> = emptyList(),
+    val cookingTime: Int = 0,
+    val experience: Double = 0.0,
 ) {
     val shaped: Boolean get() = type == "shaped"
+
+    /** A cook-family recipe (smelting/blasting/smoking/campfire) — carries a cook time. */
+    val cooks: Boolean get() = cookingTime > 0
+
+    /** Cook time in seconds (20 ticks/s), for display next to the furnace arrow. */
+    val cookSeconds: Double get() = cookingTime / 20.0
 }
 
 /** The `recipes.search` payload: matching recipes plus whether the cap hid more. */
@@ -347,6 +356,55 @@ data class CraftResult(
     val outputCount: Int = 0,
     val consumed: List<ConsumedItem> = emptyList(),
     val detail: String = "",
+)
+
+// ----------------------------------------------------------------- items / icons
+
+/**
+ * One entry in the EMI-style item index from `items.manifest`: an item [id], its localized
+ * [name], and the [icon] *texture id* (e.g. `minecraft:item/stick`) to hand to `icons.fetch`.
+ * [icon] is blank when no texture resolved — the UI shows a placeholder for those.
+ */
+@Serializable
+data class ItemEntry(
+    val id: String = "",
+    val name: String = "",
+    val icon: String = "",
+) {
+    val hasIcon: Boolean get() = icon.isNotBlank()
+}
+
+/** One page of `items.manifest`: the [items], the full [count], and whether more were hidden. */
+@Serializable
+data class ItemManifest(
+    val items: List<ItemEntry> = emptyList(),
+    val count: Int = 0,
+    val truncated: Boolean = false,
+)
+
+/**
+ * A batch of decoded icon PNGs from `icons.fetch`, keyed by texture id, plus the texture ids
+ * the server couldn't find ([missing]). Not @Serializable: the client decodes the wire's base64
+ * into raw bytes the UI hands straight to `BitmapFactory.decodeByteArray`.
+ */
+data class IconBatch(
+    val icons: Map<String, ByteArray> = emptyMap(),
+    val missing: List<String> = emptyList(),
+)
+
+/**
+ * The `assets.sync` result: the resolved [version], the cached [jar] path, the source [url] and
+ * [sha1], and a [status] ("present" | "downloaded" | "mismatch" | "error"). [ok] is true once the
+ * vanilla jar is in place (present or freshly downloaded), so vanilla items now have icons + names.
+ */
+@Serializable
+data class VanillaSync(
+    val version: String = "",
+    val jar: String = "",
+    val url: String = "",
+    val sha1: String = "",
+    val status: String = "",
+    val ok: Boolean = false,
 )
 
 /** Capabilities the client may request in `agent.hello`. */
