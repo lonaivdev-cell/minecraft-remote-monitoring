@@ -160,6 +160,134 @@ def test_restore_missing_archive(cfg, fake_t):
         mgr.restore("world-world-19990101-000000.tar.zst")
 
 
+# ---------------------------------------------------------------- extract (inspection)
+
+def test_extract_unpacks_without_touching_world(cfg, fake_t):
+    mgr = _mgr(cfg, fake_t, running=True)          # works even while the server is up
+    name = "world-world-20260101-000000.tar.zst"
+    fake_t.files[f"/opt/minecraft-backups/{name}"] = "binary"
+    fake_t.expect("zstd -t -q", rc=0)              # integrity check passes
+    dest = mgr.extract(name, "/tmp/inspect")
+    assert dest == "/tmp/inspect"
+    script = fake_t.calls_matching("tar -xf -")[0]
+    assert "-C" in script and "/tmp/inspect" in script
+    assert "zstd -dc" in script
+    # the inspection copy must never disturb the live world or pause autosave
+    assert not fake_t.calls_matching("pre-restore")
+    assert not fake_t.calls_matching("save-off")
+
+
+def test_extract_allows_full_archive(cfg, fake_t):
+    mgr = _mgr(cfg, fake_t, running=False)
+    name = "world-full-20260101-000000.tar.zst"    # restore() refuses these; extract() doesn't
+    fake_t.files[f"/opt/minecraft-backups/{name}"] = "binary"
+    fake_t.expect("zstd -t -q", rc=0)
+    assert mgr.extract(name, "/tmp/full-inspect") == "/tmp/full-inspect"
+
+
+def test_extract_refuses_nonempty_dest(cfg, fake_t):
+    mgr = _mgr(cfg, fake_t, running=False)
+    name = "world-world-20260101-000000.tar.zst"
+    fake_t.files[f"/opt/minecraft-backups/{name}"] = "binary"
+    fake_t.expect("zstd -t -q", rc=0)
+    fake_t.expect("tar -xf -", rc=3, out="==NONEMPTY\n")
+    with pytest.raises(BackupError, match="not empty"):
+        mgr.extract(name, "/tmp/occupied")
+
+
+def test_extract_missing_archive(cfg, fake_t):
+    mgr = _mgr(cfg, fake_t, running=False)
+    with pytest.raises(BackupError, match="no such backup"):
+        mgr.extract("world-world-19990101-000000.tar.zst", "/tmp/x")
+
+
+def test_extract_rejects_foreign_name(cfg, fake_t):
+    mgr = _mgr(cfg, fake_t, running=False)
+    fake_t.files["/opt/minecraft-backups/random.tar.zst"] = "binary"
+    with pytest.raises(BackupError, match="not a recognized"):
+        mgr.extract("random.tar.zst", "/tmp/x")
+
+
+def test_extract_refuses_corrupt_archive(cfg, fake_t):
+    mgr = _mgr(cfg, fake_t, running=False)
+    name = "world-world-20260101-000000.tar.zst"
+    fake_t.files[f"/opt/minecraft-backups/{name}"] = "binary"
+    fake_t.expect("zstd -t -q", rc=1)              # integrity check fails
+    with pytest.raises(BackupError, match="integrity"):
+        mgr.extract(name, "/tmp/x")
+    assert not fake_t.calls_matching("tar -xf -")
+
+
+def test_extract_requires_dest(cfg, fake_t):
+    mgr = _mgr(cfg, fake_t, running=False)
+    with pytest.raises(BackupError, match="destination"):
+        mgr.extract("world-world-20260101-000000.tar.zst", "")
+
+
+# ---------------------------------------------------------------- off-site mirror (rclone)
+
+def _offsite_mgr(cfg, fake_t, *, remote="oci:bucket/world", mode="copy"):
+    cfg.server.server_dir = "/opt/minecraft"
+    cfg.backup.remote_dir = "/opt/minecraft-backups"
+    cfg.backup.offsite_remote = remote
+    cfg.backup.offsite_mode = mode
+    return BackupManager(cfg, fake_t)
+
+
+def test_offsite_unconfigured(cfg, fake_t):
+    mgr = _offsite_mgr(cfg, fake_t, remote="")
+    with pytest.raises(BackupError, match="not configured"):
+        mgr.offsite_sync()
+    assert not fake_t.calls_matching("rclone")     # never shells out when disabled
+
+
+def test_offsite_missing_rclone(cfg, fake_t):
+    mgr = _offsite_mgr(cfg, fake_t)
+    fake_t.expect("command -v rclone", rc=1)
+    with pytest.raises(BackupError, match="rclone not found"):
+        mgr.offsite_sync()
+
+
+def test_offsite_copy_command(cfg, fake_t):
+    mgr = _offsite_mgr(cfg, fake_t)
+    fake_t.expect("command -v rclone", rc=0)
+    fake_t.expect("rclone copy", out="Transferred: 2 / 2, 100%\n")
+    res = mgr.offsite_sync()
+    assert res == {"remote": "oci:bucket/world", "mode": "copy", "dry": False,
+                   "summary": "Transferred: 2 / 2, 100%"}
+    script = fake_t.calls_matching("rclone copy")[0]
+    assert "/opt/minecraft-backups" in script
+    assert "oci:bucket/world" in script
+    assert "world-*.tar.*" in script               # only finished archives are mirrored
+    assert "--dry-run" not in script
+
+
+def test_offsite_sync_mode_mirrors(cfg, fake_t):
+    mgr = _offsite_mgr(cfg, fake_t, mode="sync")
+    fake_t.expect("command -v rclone", rc=0)
+    fake_t.expect("rclone sync", out="")
+    res = mgr.offsite_sync()
+    assert res["mode"] == "sync"
+    assert fake_t.calls_matching("rclone sync")
+
+
+def test_offsite_dry_run(cfg, fake_t):
+    mgr = _offsite_mgr(cfg, fake_t)
+    fake_t.expect("command -v rclone", rc=0)
+    fake_t.expect("rclone copy", out="Transferred: 0 / 0\n")
+    res = mgr.offsite_sync(dry=True)
+    assert res["dry"] is True
+    assert "--dry-run" in fake_t.calls_matching("rclone copy")[0]
+
+
+def test_offsite_propagates_failure(cfg, fake_t):
+    mgr = _offsite_mgr(cfg, fake_t)
+    fake_t.expect("command -v rclone", rc=0)
+    fake_t.expect("rclone copy", rc=5, out="ERROR: oci: auth failed\n")
+    with pytest.raises(BackupError, match="rclone copy failed"):
+        mgr.offsite_sync()
+
+
 # ---------------------------------------------------------------- full-backup excludes
 
 def test_full_excludes_outside_server_dir(cfg):

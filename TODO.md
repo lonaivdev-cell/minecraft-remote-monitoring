@@ -199,5 +199,13 @@ channel for the app to cache and render offline. Decided 2026-06-20:
 - [ ] `mcctl mods` — list server mods with versions; diff client vs server pack.
 - [ ] The Hordes deployment helper (planned pack addition).
 - [x] Prometheus textfile exporter from `metrics.jsonl` for Grafana. *(scheduled: v0.5.0)*
-- [ ] `mcctl backup restore --to <dir>` for side-by-side world inspection.
-- [ ] Off-site backup hook (rclone to OCI Object Storage) after local rotation.
+- [x] `mcctl backup restore --to <dir>` for side-by-side world inspection — a
+      `BackupManager.extract` that unpacks any snapshot (incl. `--full`) into a fresh
+      dir, never touching the live world and working while the server runs (empty-dir
+      guard + integrity check). Surfaces: CLI `backup restore --to`, agent `backup.extract`
+      (actions-gated), Android `:core` `backupExtract`.
+- [x] Off-site backup hook (rclone to OCI Object Storage) after local rotation —
+      `BackupManager.offsite_sync` (`copy`/`sync`, finished-archive filter), `[backup]`
+      config (`offsite_remote`/`offsite_mode`/`offsite_after_prune`), CLI `backup offsite`,
+      agent `backup.offsite`, Android `:core` `backupOffsite`; auto-pushes after a
+      `backup create` rotation when enabled (best-effort, `--notify` on failure).

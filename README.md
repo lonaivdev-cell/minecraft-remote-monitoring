@@ -32,7 +32,7 @@ mcctl init  →  mcctl doctor  →  mcctl start  →  mcctl dash
 | `mcctl watch` | line-oriented live monitor: one compact status line per interval (state/players/TPS/MSPT/heap/RAM/load), scrollable and greppable; records metric history as it runs |
 | `mcctl history [tps\|mspt\|heap\|players\|mem\|load\|all]` | terminal charts of recorded metric history with min/avg/max/last summaries |
 | `mcctl trace [--learn]` | live JVM GC tracer (`jstat -gcutil`): young/full collections, pause times, eden/old/metaspace occupancy — watch how the JVM manages memory, with a learn-mode walkthrough |
-| `mcctl backup [create\|list\|prune\|pull\|verify\|restore]` | consistent snapshots (`save-off` → flush → tar+zstd → verify → `save-on` guaranteed), GFS rotation, rsync pull, safe restore |
+| `mcctl backup [create\|list\|prune\|pull\|verify\|restore\|offsite]` | consistent snapshots (`save-off` → flush → tar+zstd → verify → `save-on` guaranteed), GFS rotation, rsync pull, safe restore, `restore --to <dir>` inspection extract, off-site rclone mirror |
 | `mcctl save` | `save-all flush` with confirmation; `--skip-if-down` for timers |
 | `mcctl watchdog [run\|arm\|disarm\|status\|install]` | self-healing daemon: crash restart with backoff, freeze detection (stale log + dead console → thread dump → restart), crash-loop breaker, TPS/heap/disk/SSH alerts |
 | `mcctl tps` / `health` / `profile` | spark TPS/MSPT/CPU, memory/disk health, async profiler → `spark.lucko.me` URL |
@@ -161,7 +161,9 @@ crash report) land in `~/.local/state/mcctl/crashes/` before every heal.
 - **Consistent while live:** `save-off` → `save-all flush` → wait "Saved the game" → `tar | zstd` → integrity test → `save-on` (re-enabled on *every* code path).
 - **Rotation (GFS):** newest 8 + 1/day for 7 days + 1/ISO-week for 4 weeks; `--full` instance archives are never auto-deleted.
 - **Disk guard:** refuses below `min_free_gb`; never overwrites — restore moves the current world to `world.pre-restore-<ts>`.
+- **Inspect without risk:** `mcctl backup restore <name> --to <dir>` unpacks any snapshot (including `--full`) into a fresh directory for side-by-side inspection — it never touches the live world and works while the server is running (the destination must be empty; the archive is integrity-checked first).
 - `mcctl backup pull` mirrors archives to this machine over rsync.
+- **Off-site mirror:** point `backup.offsite_remote` at an [rclone](https://rclone.org) target (e.g. OCI Object Storage, `oci:bucket/world`) and `mcctl backup offsite` pushes the archives there — `copy` (never deletes off-site) or `sync` (mirror the pruned set), filtered to finished `{prefix}-*.tar.*` archives. Set `offsite_after_prune = true` to push automatically after each `mcctl backup create` rotates (best-effort: a failed mirror never fails the local backup, but `--notify` raises an alert).
 
 ## Security notes
 

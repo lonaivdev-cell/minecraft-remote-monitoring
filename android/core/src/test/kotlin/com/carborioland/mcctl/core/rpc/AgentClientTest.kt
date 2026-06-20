@@ -50,6 +50,16 @@ class AgentClientTest {
                     })
                 })
             })
+            "backup.extract" -> FakeTransport.reply(id, buildJsonObject {
+                put("ok", JsonPrimitive(true))
+                put("dest", params["to"] ?: JsonPrimitive("/tmp/insp"))
+            })
+            "backup.offsite" -> FakeTransport.reply(id, buildJsonObject {
+                put("remote", JsonPrimitive("oci:bucket/world"))
+                put("mode", JsonPrimitive("copy"))
+                put("dry", params["dry"] ?: JsonPrimitive(false))
+                put("summary", JsonPrimitive("Transferred: 2 / 2, 100%"))
+            })
             // "nobody online" -> the agent returns a JSON null result.
             "players.list" -> buildJsonObject {
                 put("jsonrpc", JsonPrimitive("2.0"))
@@ -305,6 +315,22 @@ class AgentClientTest {
     fun `players list tolerates a null result (nobody online)`() = runTest {
         val client = AgentClient(agent(), backgroundScope).also { it.open() }
         assertNull(client.playersList())
+    }
+
+    @Test
+    fun `backup extract returns the destination`() = runTest {
+        val client = AgentClient(agent(), backgroundScope).also { it.open() }
+        assertEquals("/tmp/insp", client.backupExtract("world-20260611.tar.zst", "/tmp/insp"))
+    }
+
+    @Test
+    fun `backup offsite parses the rclone summary and echoes dry-run`() = runTest {
+        val client = AgentClient(agent(), backgroundScope).also { it.open() }
+        val res = client.backupOffsite(dry = true)!!
+        assertEquals("oci:bucket/world", res.remote)
+        assertEquals("copy", res.mode)
+        assertTrue(res.dry)
+        assertEquals("Transferred: 2 / 2, 100%", res.summary)
     }
 
     @Test

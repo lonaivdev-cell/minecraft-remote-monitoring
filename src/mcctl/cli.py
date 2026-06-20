@@ -405,6 +405,20 @@ def cmd_backup(ctx: Ctx) -> int:
         if dropped:
             rc.print(f"rotated out {len(dropped)}: " + ", ".join(e.name for e in dropped))
         rc.print(f"retained: {len(kept)} archives")
+        b = ctx.cfg.backup
+        if b.offsite_after_prune and b.offsite_remote.strip():
+            try:
+                with rc.status("[cyan]off-site mirror…[/cyan]") as status:
+                    res = mgr.offsite_sync(progress=lambda m: status.update(f"[cyan]{m}[/cyan]"))
+                rc.print(f"[green]off-site → {res['remote']}[/green]"
+                         + (f": {res['summary']}" if res["summary"] else ""))
+            except BackupError as e:
+                # the local backup already succeeded — off-site is best-effort, never fatal
+                rc.print(f"[yellow]off-site mirror failed:[/yellow] {e}")
+                if a.notify:
+                    util.notify("mcctl: off-site backup FAILED", str(e),
+                                desktop=ctx.cfg.watchdog.notify_desktop,
+                                webhook_url=ctx.cfg.watchdog.webhook_url, urgency="critical")
         return 0
 
     if sub == "list":
@@ -446,14 +460,30 @@ def cmd_backup(ctx: Ctx) -> int:
         return 0 if ok else 1
 
     if sub == "restore":
+        if a.to:
+            rc.print(f"[cyan]extracting {a.name} → {a.to} (live world untouched)…[/cyan]")
+            with util.OpsLock():
+                dest = mgr.extract(a.name, a.to)
+            rc.print(f"[green]extracted {a.name}[/green] → {dest}")
+            return 0
         rc.print(f"[bold red]This replaces the live world with {a.name}.[/bold red]")
         rc.print("The current world is moved aside (not deleted). Server must be stopped.")
+        rc.print("(To inspect a backup without touching the world, use [bold]--to <dir>[/bold].)")
         if not _confirm("Proceed with restore?", a.yes):
             return 1
         with util.OpsLock():
             aside = mgr.restore(a.name)
         rc.print(f"[green]restored {a.name}[/green] — previous world kept at {aside}")
         rc.print("start when ready: [bold]mcctl start[/bold]")
+        return 0
+
+    if sub == "offsite":
+        with rc.status("[cyan]rclone…[/cyan]") as status:
+            res = mgr.offsite_sync(dry=a.dry_run,
+                                   progress=lambda m: status.update(f"[cyan]{m}[/cyan]"))
+        verb = "would mirror" if res["dry"] else "mirrored"
+        rc.print(f"[green]{verb} → {res['remote']}[/green] ({res['mode']})"
+                 + (f": {res['summary']}" if res["summary"] else ""))
         return 0
     return 2
 
@@ -1419,8 +1449,14 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("name")
     b = bsub.add_parser("restore", help="replace the live world with a snapshot")
     b.add_argument("name")
+    b.add_argument("--to", metavar="DIR", default=None,
+                   help="unpack into DIR (server-side) for side-by-side inspection — "
+                        "never touches the live world, works while running")
     b.add_argument("--yes", action="store_true")
-    sp.set_defaults(func=cmd_backup, backup_cmd=None, full=False, dry_run=False, notify=False)
+    b = bsub.add_parser("offsite", help="mirror archives to the off-site rclone remote")
+    b.add_argument("--dry-run", action="store_true", help="show what rclone would transfer")
+    sp.set_defaults(func=cmd_backup, backup_cmd=None, full=False, dry_run=False, notify=False,
+                    to=None)
 
     sp = sub.add_parser("props", help="view/edit server.properties (validated, atomic, .bak)")
     psub = nested(sp, "props_cmd")

@@ -85,6 +85,14 @@ data class BackupEntry(
     val ageS: Double = 0.0,
 )
 
+/** Result of `backup.offsite`. Decoded by hand in AgentClient (the keys are already flat). */
+data class OffsiteResult(
+    val remote: String = "",
+    val mode: String = "copy",
+    val dry: Boolean = false,
+    val summary: String = "",
+)
+
 @Serializable
 data class WatchdogEvent(
     val ts: Double = 0.0,

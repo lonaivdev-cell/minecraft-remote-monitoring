@@ -63,6 +63,9 @@ class BackupCfg:
     full_excludes: list[str] = field(
         default_factory=lambda: ["logs", "crash-reports", ".cache", "libraries/.cache"]
     )
+    offsite_remote: str = ""                              # rclone target, e.g. "oci:bucket/world" (empty disables)
+    offsite_mode: str = "copy"                            # "copy" (never deletes off-site) | "sync" (mirror)
+    offsite_after_prune: bool = False                     # push off-site automatically after rotation
 
 
 @dataclass(slots=True)
@@ -192,6 +195,8 @@ class Config:
             problems.append("backup.keep_recent must be >= 1 (or you'd delete the backup you just made)")
         if not b.remote_dir.startswith("/"):
             problems.append("backup.remote_dir must be absolute")
+        if b.offsite_mode not in ("copy", "sync"):
+            problems.append("backup.offsite_mode must be 'copy' or 'sync'")
         if w.interval < 5:
             problems.append("watchdog.interval must be >= 5s")
         if w.max_restarts < 1:
@@ -355,6 +360,13 @@ min_free_gb = 5.0
 local_dir = ""
 # Paths excluded from `mcctl backup --full` (relative to server_dir).
 full_excludes = ["logs", "crash-reports", ".cache", "libraries/.cache"]
+# Off-site mirror via rclone (e.g. OCI Object Storage). Empty disables it.
+# Configure the remote first with `rclone config` on the server (creates "oci", …).
+offsite_remote = ""                                       # e.g. "oci:carborioland-backups/world"
+# "copy" never deletes off-site (archives accumulate); "sync" mirrors the pruned local set.
+offsite_mode = "copy"
+# Push to the off-site remote automatically after `mcctl backup create` rotates.
+offsite_after_prune = false
 
 [watchdog]
 interval = 30

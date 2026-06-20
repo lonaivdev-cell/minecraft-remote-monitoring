@@ -58,11 +58,28 @@
       },
       "summary": "Consistent snapshot + GFS rotation."
     },
+    "backup.extract": {
+      "capability": "actions",
+      "destructive": false,
+      "params": {
+        "name": "str",
+        "to": "str"
+      },
+      "summary": "Unpack a snapshot into a directory for inspection (never touches the live world)."
+    },
     "backup.list": {
       "capability": null,
       "destructive": false,
       "params": {},
       "summary": "List archives (newest first)."
+    },
+    "backup.offsite": {
+      "capability": "actions",
+      "destructive": false,
+      "params": {
+        "dry": "bool"
+      },
+      "summary": "Mirror archives to the off-site rclone remote."
     },
     "backup.prune": {
       "capability": "actions",
@@ -507,6 +524,9 @@
       "keep_weekly": "int",
       "local_dir": "str",
       "min_free_gb": "float",
+      "offsite_after_prune": "bool",
+      "offsite_mode": "str",
+      "offsite_remote": "str",
       "prefix": "str",
       "remote_dir": "str"
     },

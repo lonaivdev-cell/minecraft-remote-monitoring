@@ -65,6 +65,25 @@ def test_destructive_needs_both_capability_and_confirm(srv):
     assert _call(srv, "backup.restore", {"name": "x"})["error"]["code"] == agent.CONFIRM_REQUIRED
 
 
+def test_backup_extract_is_actions_not_destructive(srv):
+    # extract writes a fresh dir but never clobbers the world -> 'actions', no confirm
+    gated = _call(srv, "backup.extract", {"name": "x", "to": "/tmp/y"})["error"]
+    assert gated["code"] == agent.CAP_REQUIRED
+    _call(srv, "agent.hello", {"capabilities": ["actions"]})
+    err = _call(srv, "backup.extract",
+                {"name": "world-world-19990101-000000.tar.zst", "to": "/tmp/y"})["error"]
+    assert err["code"] == agent.APP_ERROR          # real failure, not the gate
+    assert "no such backup" in err["message"]
+
+
+def test_backup_offsite_surfaces_unconfigured(srv):
+    assert _call(srv, "backup.offsite")["error"]["code"] == agent.CAP_REQUIRED
+    _call(srv, "agent.hello", {"capabilities": ["actions"]})
+    err = _call(srv, "backup.offsite", {"dry": True})["error"]
+    assert err["code"] == agent.APP_ERROR          # default config has no remote
+    assert "not configured" in err["message"]
+
+
 def test_status_over_local_transport(srv):
     r = _call(srv, "status", {"fast": True})
     assert "running" in r["result"]

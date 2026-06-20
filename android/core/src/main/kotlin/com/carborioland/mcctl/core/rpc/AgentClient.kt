@@ -16,6 +16,7 @@ import com.carborioland.mcctl.core.model.ItemManifest
 import com.carborioland.mcctl.core.model.JvmInfo
 import com.carborioland.mcctl.core.model.MetricSample
 import com.carborioland.mcctl.core.model.ModInfo
+import com.carborioland.mcctl.core.model.OffsiteResult
 import com.carborioland.mcctl.core.model.PlayerList
 import com.carborioland.mcctl.core.model.Postmortem
 import com.carborioland.mcctl.core.model.Recipe
@@ -224,6 +225,22 @@ class AgentClient(
     /** Destructive — sends confirm:true. The agent still refuses a running server. */
     suspend fun backupRestore(name: String): String? =
         callRaw("backup.restore", confirmed { put("name", JsonPrimitive(name)) })?.string("previous_world")
+
+    /** Unpack a snapshot into [to] for side-by-side inspection — never touches the live world. */
+    suspend fun backupExtract(name: String, to: String): String? =
+        callRaw("backup.extract", obj { put("name", JsonPrimitive(name)); put("to", JsonPrimitive(to)) })
+            ?.string("dest")
+
+    /** Mirror archives to the off-site rclone remote; null if the agent returned nothing. */
+    suspend fun backupOffsite(dry: Boolean = false): OffsiteResult? =
+        callRaw("backup.offsite", obj { put("dry", JsonPrimitive(dry)) })?.let {
+            OffsiteResult(
+                remote = it.string("remote") ?: "",
+                mode = it.string("mode") ?: "copy",
+                dry = it.bool("dry") ?: dry,
+                summary = it.string("summary") ?: "",
+            )
+        }
 
     // ------------------------------------------------------------------ logs
 
