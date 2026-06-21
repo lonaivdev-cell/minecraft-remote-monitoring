@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mcctl"
-version = "1.0.0"
+dynamic = ["version"]   # single source of truth: src/mcctl/__init__.py __version__ (see release.yml)
 description = "Remote control & monitoring for a modded Minecraft server over SSH (Arch Linux client)"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -25,6 +25,9 @@ mcctl-gui = "mcctl.gui:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.dynamic]
+version = { attr = "mcctl.__version__" }
 
 [tool.setuptools.package-data]
 mcctl = ["units/*"]
