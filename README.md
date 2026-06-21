@@ -308,8 +308,11 @@ The Android **Items** screen is the browser:
    items you happened to open. It's **idempotent and resumable**: the brain hands over an
    `assets.catalog` (every texture's CRC-32 + size), the phone diffs it against what it already
    holds and fetches **only what's missing or changed** (a resource-pack swap re-pulls just those
-   icons). A long download is promoted to a foreground service so it survives backgrounding;
-   **Settings → Offline assets** shows the cache size and clears it.
+   icons). If the server's `mcctl` is older than the app and has no `assets.catalog`, the phone
+   **degrades gracefully** — it derives the texture set from `items.manifest` and still pulls every
+   icon (count-based progress, no CRC diff) instead of failing. A long download is promoted to a
+   foreground service so it survives backgrounding; **Settings → Offline assets** shows the cache
+   size and clears it.
 6. **Craft it** — the **Crafting** screen plans a recipe against your live inventory and crafts
    it: **tap** to craft one, **press-and-hold** past `[crafting].hold_ms` to craft the max.
 

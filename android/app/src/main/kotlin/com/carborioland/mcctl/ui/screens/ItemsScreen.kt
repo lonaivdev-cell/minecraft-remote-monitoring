@@ -242,7 +242,8 @@ private fun entryFor(cache: IconCache, id: String): ItemEntry =
  * "Download every item icon for offline use", with a real progress bar. The sync runs in the
  * app-scoped [com.carborioland.mcctl.assets.AssetSyncManager], so it survives leaving this screen;
  * here we only render its state and offer start / cancel. It needs no extra capability (it reads
- * `items.manifest`/`assets.catalog`/`icons.fetch`), so it works for read-only sessions too —
+ * `items.manifest`/`assets.catalog`/`icons.fetch`), so it works for read-only sessions too, and
+ * degrades to a manifest-derived plan when the server's agent predates `assets.catalog`.
  * "Get vanilla icons" above just makes base-game items part of the set.
  */
 @Composable
@@ -258,10 +259,15 @@ private fun OfflineSyncCard(container: AppContainer, onSynced: () -> Unit) {
             is AssetSyncState.Running -> {
                 val downloading = s.phase == AssetSyncState.Phase.DOWNLOADING
                 Text(
-                    if (downloading)
-                        "${s.phase.label} — ${Format.bytes(s.doneBytes)} / ${Format.bytes(s.totalBytes)} " +
-                            "(${s.doneCount} / ${s.totalCount})"
-                    else s.phase.label,
+                    when {
+                        !downloading -> s.phase.label
+                        // Catalog known: byte-accurate "12.3 / 47.8 MB (n / total)".
+                        s.totalBytes > 0 ->
+                            "${s.phase.label} — ${Format.bytes(s.doneBytes)} / ${Format.bytes(s.totalBytes)} " +
+                                "(${s.doneCount} / ${s.totalCount})"
+                        // No catalog (older agent): no upfront total, so show bytes so far + a count.
+                        else -> "${s.phase.label} — ${Format.bytes(s.doneBytes)} (${s.doneCount} / ${s.totalCount})"
+                    },
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.mc.grassLight,
                 )
                 if (downloading && s.totalBytes > 0) {
