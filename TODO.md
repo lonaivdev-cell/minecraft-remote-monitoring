@@ -178,7 +178,11 @@ channel for the app to cache and render offline. Decided 2026-06-20:
       **idempotent/resumable** (re-running only pulls deltas). `IconCache` now persists the
       item index + a CRC sidecar, so a cold start is instant/offline and a resource-pack swap
       re-fetches just the changed icons. UI: a progress card on `ItemsScreen` ("Download all
-      icons for offline") + an "Offline assets" usage/clear panel in Settings.
+      icons for offline") + an "Offline assets" usage/clear panel in Settings. **Version-skew
+      safe:** an app newer than the server (Obtainium auto-updates the APK) hits an agent with no
+      `assets.catalog`; `AssetSyncPlanner.planFromManifest` (pure, tested) derives the texture set
+      from `items.manifest` so the sync degrades to count-based progress instead of failing with
+      "unknown method: assets.catalog".
 - [ ] **EMI extras (later):** tag-ingredient cycling in slots.
 - [x] **Vanilla icons — PR #2:** a server has no client `assets/` (mods carry their
       own), so `assets.py` now fetches the **matching Mojang client jar** and caches it

@@ -2,6 +2,8 @@ package com.carborioland.mcctl.assets
 
 import android.content.Context
 import com.carborioland.mcctl.core.model.AssetSyncPlanner
+import com.carborioland.mcctl.core.rpc.RpcCodes
+import com.carborioland.mcctl.core.rpc.RpcException
 import com.carborioland.mcctl.data.ServerRepository
 import com.carborioland.mcctl.session.SessionService
 import com.carborioland.mcctl.ui.IconCache
@@ -104,15 +106,28 @@ class AssetSyncManager(
 
     private suspend fun runSync() {
         // 1. Index — page items.manifest in full and persist it for instant, offline cold starts.
+        //    Keep the entries: they're the texture set for the no-catalog fallback below.
         _state.value = AssetSyncState.Running(AssetSyncState.Phase.INDEXING)
-        iconCache.syncIndex()
+        val items = iconCache.syncIndex()
 
         // 2. Catalog — ask the brain for every icon's crc + size, then diff against the local cache.
+        //    An older agent has no `assets.catalog` (the method is optional — it only optimizes the
+        //    sync with crc diffing + a byte-accurate bar); fall back to a manifest-derived plan so a
+        //    server that predates the method still syncs instead of failing hard.
         _state.value = AssetSyncState.Running(AssetSyncState.Phase.CATALOGING)
-        val catalog = withContext(Dispatchers.IO) { repository.requireClient().assetsCatalog() }
-        val plan = AssetSyncPlanner.plan(catalog, iconCache.localCatalog())
+        val local = iconCache.localCatalog()
+        val plan = try {
+            val catalog = withContext(Dispatchers.IO) { repository.requireClient().assetsCatalog() }
+            AssetSyncPlanner.plan(catalog, local)
+        } catch (e: RpcException) {
+            if (e.code != RpcCodes.METHOD_NOT_FOUND) throw e
+            AssetSyncPlanner.planFromManifest(items, local)
+        }
 
-        // 3. Download — fetch only the missing/changed textures, batched, persisting as we go.
+        // 3. Download — fetch only the missing/changed textures, batched, persisting as we go. With a
+        //    catalog the bar is byte-accurate; in the fallback (totalBytes == 0) we tally the bytes
+        //    actually fetched, so the count drives the bar and the "this run" total stays honest.
+        val byteAccurate = plan.totalBytes > 0
         var doneBytes = 0L
         var doneCount = 0
         var missing = 0
@@ -126,7 +141,8 @@ class AssetSyncManager(
                 repository.requireClient().iconsFetch(batch.map { it.id })
             }
             missing += iconCache.persistBatch(batch, fetched.icons)
-            doneBytes += batch.sumOf { it.size }
+            doneBytes += if (byteAccurate) batch.sumOf { it.size }
+                         else fetched.icons.values.sumOf { it.size.toLong() }
             doneCount += batch.size
             _state.value = AssetSyncState.Running(
                 AssetSyncState.Phase.DOWNLOADING, doneBytes, plan.bytesToFetch, doneCount, plan.toFetch.size,
@@ -137,7 +153,7 @@ class AssetSyncManager(
             fetched = plan.toFetch.size - missing,
             upToDate = plan.upToDate,
             missing = missing,
-            bytes = plan.bytesToFetch,
+            bytes = doneBytes,
         )
     }
 
