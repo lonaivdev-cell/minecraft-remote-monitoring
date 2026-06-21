@@ -72,6 +72,14 @@ Android (run from `android/`):
 - **mcctl is server-side.** It drives the server over RCON/console; it cannot reach a
   player's client GUI. Features like command-craft reproduce the *outcome* via
   `/clear`+`/give` (loose inventory only → can't dupe), not by touching the game UI.
+- **The version is gospel — bump it with the change.** `src/mcctl/__init__.py` `__version__`
+  is the **single source of truth** (`pyproject.toml` reads it dynamically via
+  `[tool.setuptools.dynamic]`; the Android APK derives its `versionName`/`versionCode` from it
+  in `release.yml`). Any PR with a user-facing change (CLI/agent/GUI/phone) **bumps
+  `__version__`** (semver) in the same PR, so `mcctl --version` is an honest freshness signal
+  and merging to `main` auto-cuts a release. No bump → no release. The number must only ever go
+  **up** (`versionCode = major*10000 + minor*100 + patch` must increase or Obtainium won't
+  upgrade).
 
 ## CI/CD pipeline
 
@@ -81,29 +89,24 @@ Three GitHub Actions workflows:
 |---|---|---|
 | **`ci.yml`** | every push / PR | Python: `ruff` + unit + integration (`real tmux`) tests |
 | **`android.yml`** | push/PR touching `android/**` | `:core` tests → builds the debug APK → uploads the **`mcctl-debug-apk`** artifact (CI check, not a release) |
-| **`release.yml`** | tag `v*`, or manual **Run workflow** | builds the APK and publishes a **GitHub Release** with it attached — the artifact Obtainium installs |
+| **`release.yml`** | push to `main` (auto-cuts when `__version__` changed), or manual **Run workflow** | reads the gospel version; if `v<version>` isn't released yet, builds the APK and publishes a **GitHub Release** tagged `v<version>` with it attached — the artifact Obtainium installs |
 
 ### Cutting an Android release (→ Obtainium)
 
-The phone installs from a **GitHub Release**, not a CI artifact. To publish one:
-
-```bash
-# 1. bump where the version is surfaced if needed, then tag:
-git tag v0.7.0
-git push origin v0.7.0
-```
-
-…or trigger it without a tag from **Actions → release → Run workflow** and type the
-version (e.g. `v0.7.0`) — the workflow normalises and tags it.
-
-`release.yml` then:
-1. runs the `:core` gate,
-2. derives the APK version from the tag — `v0.7.0` → `versionName 0.7.0`,
-   `versionCode = major*10000 + minor*100 + patch = 700` (passed to Gradle as
-   `-PappVersionName`/`-PappVersionCode`, consumed in `android/app/build.gradle.kts`),
+**You don't tag by hand — the version does it.** Bump `__version__` in
+`src/mcctl/__init__.py` as part of your PR (see the "version is gospel" convention above).
+When that PR merges to `main`, `release.yml`:
+1. reads `__version__` and computes `tag = v<version>`,
+   `versionCode = major*10000 + minor*100 + patch` (e.g. `1.1.2` → `versionCode 10102`),
+2. **no-ops if a `v<version>` tag already exists** (a merge that didn't touch the version
+   ships nothing) — otherwise runs the `:core` gate,
 3. builds a **signed release** APK if the keystore secrets are set, else the
    **debug-signed** APK as a side-loadable fallback,
-4. names it `mcctl-android-v0.7.0.apk` and publishes a GitHub Release with it attached.
+4. names it `mcctl-android-v<version>.apk`, **creates the `v<version>` tag** and publishes a
+   GitHub Release with the APK attached.
+
+Need to re-cut a version (same number)? **Actions → release → Run workflow** and tick
+**force**. (The manual run still reads `__version__`; it never asks you to type a version.)
 
 **Install on the phone:** [Obtainium](https://github.com/ImranR98/Obtainium) → Add App →
 paste `https://github.com/lonaivdev-cell/minecraft-remote-monitoring`. Obtainium watches the
@@ -116,6 +119,24 @@ Releases page and offers every new tag as an update.
   upgrade across a different `applicationId`. Set the signing secrets once and stay signed:
   `KEYSTORE_BASE64`, `KEYSTORE_STORE_PASSWORD`, `KEYSTORE_KEY_ALIAS`, `KEYSTORE_KEY_PASSWORD`
   (setup steps are commented in `release.yml`).
+
+### Updating `mcctl` on the server
+
+The phone auto-updates via Obtainium, but the **server's `mcctl` is updated by hand** — and a
+skew (newer phone, older agent) is what makes the agent answer `unknown method: …`. To update:
+
+```bash
+cd /path/to/minecraft-remote-monitoring
+git pull
+pipx install --force .     # NOT `pipx upgrade`: it compares versions and no-ops; --force reinstalls
+mcctl --version           # confirm it now reports the version you pulled
+```
+
+`pipx upgrade` is a trap with a local checkout: it copies the code into pipx's own venv and
+only reinstalls when the **version number** rises, so a same-version pull is a silent no-op.
+`pipx install --force .` reinstalls unconditionally. (An editable `make dev` install tracks the
+working tree live and needs no reinstall.) Because `__version__` is now bumped per change,
+`mcctl --version` is the freshness check — match it against the latest release tag.
 
 > The dev sandbox can't reach Google's Maven, so the **APK only builds in CI** — verify
 > Android changes by pushing and watching `android.yml`, not locally.

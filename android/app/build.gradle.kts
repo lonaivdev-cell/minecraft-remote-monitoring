@@ -7,15 +7,16 @@ plugins {
     alias(libs.plugins.compose.compiler)
 }
 
-// Version is driven by the release tag so the APK Android installs matches the
-// GitHub release Obtainium shows. CI passes -PappVersionName / -PappVersionCode
-// derived from the pushed tag (see .github/workflows/release.yml). Local/dev
-// builds fall back to the defaults below.
+// Version is driven by the gospel source version (src/mcctl/__init__.py __version__) so the
+// APK Android installs matches the GitHub release Obtainium shows. CI passes -PappVersionName /
+// -PappVersionCode derived from that version (see .github/workflows/release.yml). Local/dev and
+// the android.yml debug-artifact build fall back to the defaults below (never installed as a
+// release), so keep the name roughly in step with __version__.
 //
-// CRITICAL: versionCode must increase with every release, or Android/Obtainium
-// treats the new APK as "already installed" and refuses to upgrade. The release
-// workflow computes it from semver as major*10000 + minor*100 + patch.
-val appVersionName = (project.findProperty("appVersionName") as String?) ?: "0.6.0"
+// CRITICAL: versionCode must increase with every release, or Android/Obtainium treats the new
+// APK as "already installed" and refuses to upgrade. The release workflow computes it from
+// semver as major*10000 + minor*100 + patch.
+val appVersionName = (project.findProperty("appVersionName") as String?) ?: "1.1.2"
 val appVersionCode = (project.findProperty("appVersionCode") as String?)?.toIntOrNull() ?: 1
 
 android {
