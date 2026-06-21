@@ -196,7 +196,12 @@ channel for the app to cache and render offline. Decided 2026-06-20:
 ---
 
 ## Backlog (nice-to-have, unscheduled)
-- [ ] `mcctl mods` — list server mods with versions; diff client vs server pack.
+- [x] `mcctl mods` — list server mods with versions; diff client vs server pack.
+      Listing shipped earlier; `mcctl mods --diff <client_mods_dir>` adds a pure,
+      tested `diff_mods` (server-only / client-only / version-mismatch, matched by
+      mod id with a filename fallback) over a local client-pack scan (`scan_local_mods`,
+      reusing the descriptor parsers). Client-side by nature (the box-side agent can't
+      see the player's mods), so CLI-only — no agent/schema change.
 - [ ] The Hordes deployment helper (planned pack addition).
 - [x] Prometheus textfile exporter from `metrics.jsonl` for Grafana. *(scheduled: v0.5.0)*
 - [x] `mcctl backup restore --to <dir>` for side-by-side world inspection — a

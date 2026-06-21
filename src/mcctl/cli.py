@@ -695,8 +695,50 @@ def cmd_inspect(ctx: Ctx) -> int:
 
 def cmd_mods(ctx: Ctx) -> int:
     from . import mods as M
+    a = ctx.args
     entries = M.list_mods(ctx.t, ctx.cfg)
-    if ctx.args.json:
+
+    if getattr(a, "diff", None):
+        client = M.scan_local_mods(a.diff)
+        d = M.diff_mods(entries, client)
+        if a.json:
+            print(json.dumps(d.to_dict(), indent=2))
+            return 0
+        if entries and not any(m.mod_id for m in entries):
+            rc.print("[dim]server mod ids unavailable (no python3 on the box) — "
+                     "matching by filename, which is less accurate[/dim]")
+        rc.print(f"[bold]server[/bold] {ctx.cfg.server.server_dir}/mods "
+                 f"({len(entries)})  vs  [bold]client[/bold] {a.diff} ({len(client)})")
+        if d.in_sync:
+            rc.print("[green]✓ in sync[/green] — every mod matches by id and version")
+            return 0
+
+        def _modtable(title, style, rows):
+            t = Table(title=title, title_style=style)
+            for col, kw in (("mod", {"style": "bold"}), ("id", {"style": "dim"}),
+                            ("version", {}), ("file", {"style": "dim"})):
+                t.add_column(col, **kw)
+            for m in rows:
+                t.add_row(m.name or "?", m.mod_id, m.version or "?", m.file)
+            rc.print(t)
+
+        if d.server_only:
+            _modtable(f"on SERVER, missing from client ({len(d.server_only)})",
+                      "red", d.server_only)
+        if d.client_only:
+            _modtable(f"on CLIENT, missing from server ({len(d.client_only)})",
+                      "yellow", d.client_only)
+        if d.version_mismatch:
+            t = Table(title=f"version mismatch ({len(d.version_mismatch)})", title_style="magenta")
+            for col in ("mod", "server", "client"):
+                t.add_column(col)
+            for dd in d.version_mismatch:
+                t.add_row(dd.name, dd.server_version, dd.client_version)
+            rc.print(t)
+        rc.print(f"[dim]{len(d.common)} mod(s) in sync[/dim]")
+        return 0
+
+    if a.json:
         print(json.dumps([m.to_dict() for m in entries], indent=2))
         return 0
     t = Table(title=f"{len(entries)} mods in {ctx.cfg.server.server_dir}/mods "
@@ -1527,6 +1569,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("mods", help="list server mods with versions (metadata from the jars)")
     sp.add_argument("--json", action="store_true")
+    sp.add_argument("--diff", metavar="CLIENT_MODS_DIR", default=None,
+                    help="diff the server's mods against a local client mods/ directory "
+                         "(server-only / client-only / version mismatch)")
     sp.set_defaults(func=cmd_mods)
 
     sp = sub.add_parser("recipes", help="browse the pack's crafting recipes (from jars + datapacks)")
