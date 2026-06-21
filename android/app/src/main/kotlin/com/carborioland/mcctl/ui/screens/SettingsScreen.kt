@@ -18,6 +18,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -44,6 +45,7 @@ import com.carborioland.mcctl.ui.components.McTextField
 import com.carborioland.mcctl.ui.components.SectionLabel
 import com.carborioland.mcctl.ui.theme.TerminalTextStyle
 import com.carborioland.mcctl.ui.theme.mc
+import com.carborioland.mcctl.util.Format
 import kotlinx.coroutines.launch
 
 @Composable
@@ -142,6 +144,31 @@ fun SettingsScreen(container: AppContainer) {
                 McButton("Save", kind = BtnKind.Primary, onClick = { savePush() })
                 McButton("Test now", kind = BtnKind.Neutral, onClick = {
                     PushScheduler.pollNow(context); messenger("Polling ntfy…")
+                })
+            }
+        }
+
+        McPanel {
+            SectionLabel("Offline assets")
+            var usage by remember { mutableStateOf<Pair<Int, Long>?>(null) }
+            var refresh by remember { mutableIntStateOf(0) }
+            LaunchedEffect(refresh) { usage = container.iconCache.diskUsage() }
+            val u = usage
+            Text(
+                when {
+                    u == null -> "Measuring…"
+                    u.first == 0 -> "No item icons cached yet. Use “Download all icons for offline” on the Items screen."
+                    else -> "${u.first} item icons cached · ${Format.bytes(u.second)}"
+                },
+                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.mc.dim,
+            )
+            if (u != null && u.first > 0) {
+                McButton("Clear cached assets", kind = BtnKind.Danger, modifier = Modifier.padding(top = 10.dp), onClick = {
+                    scope.launch {
+                        container.iconCache.clearOffline()
+                        messenger("Cleared cached item assets")
+                        refresh++
+                    }
                 })
             }
         }

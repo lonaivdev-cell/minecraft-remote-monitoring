@@ -59,6 +59,17 @@ def test_capability_gating(srv):
     assert err["code"] == agent.CONFIRM_REQUIRED
 
 
+def test_assets_catalog_is_read_only_and_passes_through(srv, monkeypatch):
+    from mcctl import assets
+    monkeypatch.setattr(assets, "catalog", lambda t, cfg: {
+        "textures": [{"id": "minecraft:item/stick", "crc": 1, "size": 2}],
+        "count": 1, "bytes": 2,
+    })
+    r = _call(srv, "assets.catalog")               # no capability needed (read-only)
+    assert r["result"]["count"] == 1
+    assert r["result"]["textures"][0]["id"] == "minecraft:item/stick"
+
+
 def test_destructive_needs_both_capability_and_confirm(srv):
     _call(srv, "agent.hello", {"capabilities": ["actions", "destructive"]})
     # restore needs the destructive capability + confirm; without confirm => gated

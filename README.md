@@ -46,7 +46,7 @@ mcctl init  →  mcctl doctor  →  mcctl start  →  mcctl dash
 | `mcctl mods [--diff CLIENT_MODS_DIR]` | list every mod with id/version/size (metadata read from inside each jar — NeoForge/Forge/Fabric descriptors); `--diff` compares the server's pack against a local client `mods/` directory and reports server-only / client-only / version-mismatch |
 | `mcctl recipes [search QUERY\|show ID\|tag ID]` | browse the pack's recipes — **all the categories EMI shows**: crafting (shaped/shapeless), the cook family (smelting/blasting/smoking/campfire, with cook time + xp), stonecutting and smithing — read straight out of the mod jars + world datapacks (one server-side pass, like `mods`); shows ingredients, grid pattern and output. `tag <id>` resolves a `#tag` ingredient (e.g. `minecraft:planks`) to the concrete items it accepts |
 | `mcctl items [list\|search QUERY\|icon ID]` | **EMI-style item index**: every item the pack defines with its real display name (from `en_us.json`) and resolved icon texture (model `parent`-chain → texture), read from the vanilla jar + mod jars + `resourcepacks/`. `icon <id> -o out.png` downloads one item's PNG; the phone uses the same `items.manifest` + `icons.fetch` agent methods to cache icons and render recipes with pictures, offline |
-| `mcctl assets [status\|sync]` | **vanilla item assets**: a server ships no client `assets/`, so vanilla items (`minecraft:*`) have no icon/name until `sync` fetches the **matching Mojang client jar** (version auto-detected or `[server].mc_version`) onto the server, sha1-verified and cached, scanned at lowest priority so mods/resourcepacks still override. All download traffic stays on the box ("brain on the box"); `status` shows the detected version + whether it's cached |
+| `mcctl assets [status\|sync\|catalog]` | **vanilla item assets**: a server ships no client `assets/`, so vanilla items (`minecraft:*`) have no icon/name until `sync` fetches the **matching Mojang client jar** (version auto-detected or `[server].mc_version`) onto the server, sha1-verified and cached, scanned at lowest priority so mods/resourcepacks still override. All download traffic stays on the box ("brain on the box"); `status` shows the detected version + whether it's cached; `catalog` lists the phone's offline-sync set (every icon texture + CRC-32 + size — what the app diffs to download only what changed) |
 | `mcctl craft ID [--count N\|--max] [--source\|--receiver NAME] [--preview]` | survival **command-craft**: reads your live inventory, consumes the inputs (`/clear`) and grants the output (`/give`). `--max` makes the most your materials allow, capped at one output stack. Only ever consumes *loose* (accessible) inventory, so it can't dupe; `--preview` plans without crafting (see [the honest note below](#command-craft-pick-a-recipe-it-gets-made)) |
 | `mcctl config [tree\|get\|set\|edit]` | browse & edit the per-mod files under `config/` — `tree` lists them grouped by the owning mod (matched from the jars), `get` prints one, `edit` opens it in `$EDITOR` and re-uploads (TOML/JSON validated before write, atomic, timestamped `.bak`), `set` writes from a file/stdin; `--reload` runs `/reload`, `--restart` does a full apply. Saving relies on NeoForge's config file-watcher to live-reload mods that support it — startup/cached values still need a restart |
 | `mcctl ai [logs\|crash\|mods\|inspect\|ask\|chat]` | AI analysis & multi-turn chat, powered by **Claude or a local LLM via ollama** (`[llm].provider`): review logs, root-cause crash reports, explain what the mods do, teacher-mode walkthroughs, free-form questions, and an interactive `chat` session — all with live server context attached |
@@ -303,7 +303,14 @@ The Android **Items** screen is the browser:
      answers instantly from a client-side index).
 3. **Pivot** — tap any ingredient slot to jump to *that* item's recipes, EMI-style.
 4. **Get vanilla icons** — one tap runs `assets.sync` so base-game items gain icons + names.
-5. **Craft it** — the **Crafting** screen plans a recipe against your live inventory and crafts
+5. **Download all icons for offline** — one tap pulls **every** item icon to the phone with a
+   **progress bar** ("12.3 / 47.8 MB"), so the whole browser works with no signal — not just the
+   items you happened to open. It's **idempotent and resumable**: the brain hands over an
+   `assets.catalog` (every texture's CRC-32 + size), the phone diffs it against what it already
+   holds and fetches **only what's missing or changed** (a resource-pack swap re-pulls just those
+   icons). A long download is promoted to a foreground service so it survives backgrounding;
+   **Settings → Offline assets** shows the cache size and clears it.
+6. **Craft it** — the **Crafting** screen plans a recipe against your live inventory and crafts
    it: **tap** to craft one, **press-and-hold** past `[crafting].hold_ms` to craft the max.
 
 ### On the CLI / desktop
@@ -316,6 +323,7 @@ mcctl recipes show minecraft:chest    # ingredients, grid, cook time…
 mcctl recipes tag minecraft:planks    # what a #tag ingredient accepts
 mcctl assets status               # detected MC version + is the vanilla jar cached?
 mcctl assets sync                 # fetch the matching client jar (vanilla icons + names)
+mcctl assets catalog              # the phone's offline-sync set: icon count + total bytes
 mcctl craft minecraft:chest --preview  # plan against live inventory, craft nothing
 mcctl craft minecraft:chest --max      # craft the most your materials allow (one stack)
 ```

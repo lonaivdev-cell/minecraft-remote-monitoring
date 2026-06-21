@@ -892,6 +892,15 @@ def cmd_assets(ctx: Ctx) -> int:
             return 0
         rc.print(f"[red]sync failed[/red] ({res['status']}) for {res['version']}")
         return 1
+    if sub == "catalog":
+        res = assets.catalog(ctx.t, ctx.cfg)
+        if a.json:
+            print(json.dumps(res, indent=2))
+            return 0
+        rc.print(f"[bold]{res['count']}[/bold] downloadable item icon(s), "
+                 f"[bold]{util.human_bytes(res['bytes'])}[/bold] total "
+                 "[dim](the phone's offline-sync set)[/dim]")
+        return 0
     return 2
 
 
@@ -1625,6 +1634,9 @@ def build_parser() -> argparse.ArgumentParser:
     asy.add_argument("--version", help="override the MC version (default: config or auto-detect)")
     asy.add_argument("--force", action="store_true", help="re-download even if already cached")
     asy.add_argument("--json", action="store_true")
+    aca = asub.add_parser("catalog",
+                          help="the phone's offline-sync set: every icon texture + crc + size")
+    aca.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_assets, assets_cmd=None, version=None, force=False, json=False)
 
     sp = sub.add_parser("craft",

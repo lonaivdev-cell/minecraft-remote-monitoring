@@ -475,6 +475,31 @@ data class VanillaSync(
     val ok: Boolean = false,
 )
 
+/**
+ * One icon texture in the offline-sync catalog from `assets.catalog`: its texture [id], a
+ * CRC-32 [crc] content digest, and byte [size]. The phone keeps the [crc] of each cached icon
+ * and re-fetches only when the server's [crc] differs — a resource-pack change is picked up
+ * even though the texture id is unchanged. [crc] is a Long because it spans the full uint32 range.
+ */
+@Serializable
+data class AssetCatalogEntry(
+    val id: String = "",
+    val crc: Long = 0,
+    val size: Long = 0,
+)
+
+/**
+ * The `assets.catalog` payload — the table of contents for the phone's bulk icon download: every
+ * downloadable [textures] entry, the [count], and the total [bytes]. Pair with `items.manifest`
+ * for names and feed each entry's id to `icons.fetch` for the PNG bytes.
+ */
+@Serializable
+data class AssetCatalog(
+    val textures: List<AssetCatalogEntry> = emptyList(),
+    val count: Int = 0,
+    val bytes: Long = 0,
+)
+
 /** Capabilities the client may request in `agent.hello`. */
 enum class Capability(val wire: String) {
     /** Lifecycle + console + player + backup actions. */
