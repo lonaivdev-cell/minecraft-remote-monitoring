@@ -123,7 +123,10 @@ Releases page and offers every new tag as an update.
 ### Updating `mcctl` on the server
 
 The phone auto-updates via Obtainium, but the **server's `mcctl` is updated by hand** — and a
-skew (newer phone, older agent) is what makes the agent answer `unknown method: …`. To update:
+skew (newer phone, older agent) is what makes the agent answer `unknown method: …`. The quickest
+path is the bundled **`./update.sh`** (or `make update`): it pulls, reinstalls, restarts the
+watchdog onto the new code, and runs `mcctl doctor`/`mcctl status` with a before/after health
+panel — and it *verifies the install took* (the dropped-`.` trap below). By hand it's:
 
 ```bash
 cd /path/to/minecraft-remote-monitoring

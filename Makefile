@@ -1,6 +1,6 @@
 # Convenience targets; on Arch prefer `makepkg -si` (see PKGBUILD).
 
-.PHONY: dev test test-all lint install-user install-units clean
+.PHONY: dev test test-all lint install-user install-units update clean
 
 dev:            ## editable install + dev deps
 	pip install -e ".[dev]"
@@ -19,6 +19,9 @@ install-user:   ## non-Arch fallback (pipx recommended over this)
 
 install-units:  ## user units without pacman (pipx installs)
 	mcctl watchdog install
+
+update:         ## pull + reinstall (pipx --force .) + restart watchdog + health-check
+	./update.sh
 
 clean:
 	rm -rf build dist *.egg-info src/*.egg-info .pytest_cache .ruff_cache pkg
