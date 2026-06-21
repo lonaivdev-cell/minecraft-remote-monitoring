@@ -41,6 +41,12 @@
       "params": {},
       "summary": "Close the session cleanly."
     },
+    "assets.catalog": {
+      "capability": null,
+      "destructive": false,
+      "params": {},
+      "summary": "Offline-sync table of contents: every item-icon texture with its crc32 + byte size, so the phone can diff its local cache and download only what changed. Pairs with items.manifest (names) and feeds icons.fetch (bytes)."
+    },
     "assets.sync": {
       "capability": "actions",
       "destructive": false,

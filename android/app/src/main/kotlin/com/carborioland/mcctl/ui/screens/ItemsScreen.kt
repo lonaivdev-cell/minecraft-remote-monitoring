@@ -15,6 +15,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as gridItems
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -28,11 +29,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.carborioland.mcctl.assets.AssetSyncState
 import com.carborioland.mcctl.core.model.Capability
 import com.carborioland.mcctl.core.model.ItemEntry
 import com.carborioland.mcctl.core.model.Recipe
 import com.carborioland.mcctl.di.AppContainer
 import com.carborioland.mcctl.ui.IconCache
+import com.carborioland.mcctl.util.Format
 import com.carborioland.mcctl.ui.components.AsyncContent
 import com.carborioland.mcctl.ui.components.BtnKind
 import com.carborioland.mcctl.ui.components.EmptyHint
@@ -80,7 +84,8 @@ fun ItemsScreen(container: AppContainer) {
                 McTextField("Search items by name or id", query, { query = it }, modifier = Modifier.weight(1f))
                 McButton("Search", kind = BtnKind.Primary, modifier = Modifier.padding(start = 10.dp), onClick = { activeQuery = query.trim() })
             }
-            VanillaIconsButton(container, onSynced = { cache.clear(); res.reload() })
+            VanillaIconsButton(container, onSynced = { cache.invalidateIndex(); res.reload() })
+            OfflineSyncCard(container, onSynced = { res.reload() })
         }
 
         AsyncContent(res.state, onRetry = res.reload) { manifest ->
@@ -232,3 +237,67 @@ private fun VanillaIconsButton(container: AppContainer, onSynced: () -> Unit) {
 
 private fun entryFor(cache: IconCache, id: String): ItemEntry =
     ItemEntry(id = id, name = cache.nameOf(id) ?: prettyItem(id), icon = cache.textureOf(id) ?: "")
+
+/**
+ * "Download every item icon for offline use", with a real progress bar. The sync runs in the
+ * app-scoped [com.carborioland.mcctl.assets.AssetSyncManager], so it survives leaving this screen;
+ * here we only render its state and offer start / cancel. It needs no extra capability (it reads
+ * `items.manifest`/`assets.catalog`/`icons.fetch`), so it works for read-only sessions too —
+ * "Get vanilla icons" above just makes base-game items part of the set.
+ */
+@Composable
+private fun OfflineSyncCard(container: AppContainer, onSynced: () -> Unit) {
+    val manager = container.assetSyncManager
+    val state by manager.state.collectAsStateWithLifecycle()
+
+    // When a sync finishes, refresh the visible list so freshly-cached icons appear.
+    LaunchedEffect(state) { if (state is AssetSyncState.Done) onSynced() }
+
+    Column(Modifier.fillMaxWidth().padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        when (val s = state) {
+            is AssetSyncState.Running -> {
+                val downloading = s.phase == AssetSyncState.Phase.DOWNLOADING
+                Text(
+                    if (downloading)
+                        "${s.phase.label} — ${Format.bytes(s.doneBytes)} / ${Format.bytes(s.totalBytes)} " +
+                            "(${s.doneCount} / ${s.totalCount})"
+                    else s.phase.label,
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.mc.grassLight,
+                )
+                if (downloading && s.totalBytes > 0) {
+                    LinearProgressIndicator(
+                        progress = { s.fraction },
+                        modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.mc.grassLight, trackColor = MaterialTheme.mc.dim,
+                    )
+                } else {
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.mc.grassLight, trackColor = MaterialTheme.mc.dim,
+                    )
+                }
+                McButton("Cancel", kind = BtnKind.Neutral, onClick = { manager.cancel() })
+            }
+            else -> {
+                McButton("Download all icons for offline", kind = BtnKind.Primary, onClick = { manager.start() })
+                when (s) {
+                    is AssetSyncState.Done -> Text(
+                        "✓ ${s.fetched + s.upToDate} icons cached (${Format.bytes(s.bytes)} this run" +
+                            (if (s.upToDate > 0) ", ${s.upToDate} already current" else "") +
+                            (if (s.missing > 0) ", ${s.missing} not in the pack" else "") + ").",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.mc.grassLight,
+                    )
+                    is AssetSyncState.Failed -> Text(
+                        "Sync failed: ${s.message}", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    else -> Text(
+                        "Pull every item icon to the phone so the whole browser works offline. " +
+                            "Re-running only downloads what changed.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.mc.dim,
+                    )
+                }
+            }
+        }
+    }
+}

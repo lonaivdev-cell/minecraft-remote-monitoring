@@ -169,6 +169,24 @@ def build_manifest(item_models: dict[str, dict], block_models: dict[str, dict],
     return out
 
 
+def build_catalog(item_models: dict[str, dict], block_models: dict[str, dict],
+                  *, extra_items: tuple[str, ...] = ()) -> list[str]:
+    """The distinct icon texture ids the whole pack needs, sorted & namespaced.
+
+    Many items share a texture (every block item ends up at a block face), so the
+    offline sync downloads *textures*, not items — this de-dups them. Pure: it only
+    reads the model maps, exactly like `build_manifest`. Texture ids with no model
+    that resolves (no icon) are dropped; `hash_textures` later drops any that have
+    no PNG on disk, so the catalog is precisely "what the phone can download".
+    """
+    texs: set[str] = set()
+    for item_id in build_item_index(item_models, extra_items):
+        tex = resolve_icon(item_id, item_models, block_models)
+        if tex:
+            texs.add(_norm_id(tex))
+    return sorted(texs)
+
+
 # ============================================================ remote: model scan
 
 # One TSV line per item/block model and per lang file, like the recipe scanner:
@@ -420,6 +438,125 @@ def fetch_icons(t: BaseTransport, cfg: Config, textures: list[str]) -> dict[str,
     if "==NOPY" in r.out:
         raise AssetError("the server has no python3 — icon extraction needs it")
     return parse_icon_listing(r.out)
+
+
+# ============================================================ remote: icon catalog
+#
+# The "table of contents" for the phone's offline sync: every icon texture with a
+# cheap content digest (CRC-32) + byte size, so the client can diff its local cache
+# and fetch only what's missing or changed. CRC-32 + uncompressed size come straight
+# from a jar's central directory — no decompression — so this stays fast even on a
+# pack with tens of thousands of item models. It's a change-detector for caching, not
+# a security boundary: the client jar itself is sha1-verified on download, and icons
+# are inert PNGs the phone only decodes. Same scan order as fetch_icons, so an
+# overriding pack's digest is the one the client keeps (last writer wins).
+
+_PY_CATALOG_HASHER = r'''
+vanilla_dir, mods_dir, packs_dir = sys.argv[1], sys.argv[2], sys.argv[3]
+
+def emit(texid, crc, size):
+    sys.stdout.write("==H\t%s\t%d\t%d\n" % (texid, crc & 0xffffffff, size))
+
+def scan_zip(path):
+    try:
+        z = zipfile.ZipFile(path)
+    except Exception:
+        return
+    info = {zi.filename: zi for zi in z.infolist()}   # central directory: CRC + size, no read
+    for rel, texid in WANTED.items():
+        zi = info.get(rel)
+        if zi is not None:
+            emit(texid, zi.CRC, zi.file_size)
+
+def scan_dir(root):
+    for rel, texid in WANTED.items():
+        full = os.path.join(root, rel)
+        if os.path.isfile(full):
+            try:
+                with open(full, "rb") as fh:
+                    data = fh.read()
+                emit(texid, zlib.crc32(data), len(data))
+            except Exception:
+                pass
+
+for jar_dir in (vanilla_dir, mods_dir):     # vanilla client jar (lowest) then mods
+    if os.path.isdir(jar_dir):
+        for entry in sorted(os.listdir(jar_dir)):
+            if entry.endswith(".jar"):
+                scan_zip(os.path.join(jar_dir, entry))
+if os.path.isdir(packs_dir):                # resource packs override (highest)
+    for entry in sorted(os.listdir(packs_dir)):
+        p = os.path.join(packs_dir, entry)
+        if os.path.isdir(p):
+            scan_dir(p)
+        elif entry.endswith(".zip"):
+            scan_zip(p)
+'''
+
+
+def parse_catalog_listing(out: str) -> dict[str, dict]:
+    """Decode the ==H stream into `{texture_id: {"crc": int, "size": int}}`.
+
+    Later writers win (resource packs are scanned last), matching load order.
+    """
+    cat: dict[str, dict] = {}
+    for line in out.splitlines():
+        if not line.startswith("==H\t"):
+            continue
+        parts = line[4:].split("\t")
+        if len(parts) != 3:
+            continue
+        texid, crc, size = parts
+        try:
+            cat[texid] = {"crc": int(crc), "size": int(size)}
+        except ValueError:
+            continue
+    return cat
+
+
+def hash_textures(t: BaseTransport, cfg: Config, textures: list[str]) -> dict[str, dict]:
+    """CRC-32 + byte size for each texture id, from the jars / resource packs.
+
+    Mirrors `fetch_icons`' single inlined pass, but emits digests instead of bytes —
+    a few dozen bytes per texture, so the catalog of a whole pack is tiny on the wire.
+    """
+    import json
+
+    want = {texture_path(x): _norm_id(x) for x in textures if x}
+    if not want:
+        return {}
+    vanilla, mods, packs = _asset_dirs(cfg)
+    program = ("import json, os, sys, zipfile, zlib\n"
+               f"WANTED = json.loads({json.dumps(json.dumps(want))})\n"
+               + _PY_CATALOG_HASHER)
+    script = (
+        f"vanilla={q(vanilla)}\n"
+        f"mods={q(mods)}\n"
+        f"packs={q(packs)}\n"
+        "command -v python3 >/dev/null 2>&1 || { echo '==NOPY'; exit 0; }\n"
+        f"python3 - \"$vanilla\" \"$mods\" \"$packs\" <<'MCCTL_PY'\n{program}\nMCCTL_PY\n"
+    )
+    r = t.run(script, timeout=180)
+    if "==NOPY" in r.out:
+        raise AssetError("the server has no python3 — the icon catalog needs it")
+    return parse_catalog_listing(util.sanitize_terminal(r.out))
+
+
+def catalog(t: BaseTransport, cfg: Config) -> dict:
+    """The offline-sync manifest: `{textures:[{id,crc,size}], count, bytes}`.
+
+    Two server passes — `load_assets` (models, to know which textures exist) then
+    `hash_textures` (their digests) — composed here so every surface (agent, CLI,
+    phone) gets the identical, de-duplicated listing. Only textures that actually
+    have a PNG are included, so `count`/`bytes` describe a real download.
+    """
+    _lang, item_models, block_models = load_assets(t, cfg)
+    texs = build_catalog(item_models, block_models)
+    digests = hash_textures(t, cfg, texs)
+    entries = [{"id": tid, "crc": digests[tid]["crc"], "size": digests[tid]["size"]}
+               for tid in texs if tid in digests]
+    return {"textures": entries, "count": len(entries),
+            "bytes": sum(e["size"] for e in entries)}
 
 
 # ============================================================ vanilla client jar

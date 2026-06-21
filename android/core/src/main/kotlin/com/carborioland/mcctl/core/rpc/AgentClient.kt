@@ -1,5 +1,6 @@
 package com.carborioland.mcctl.core.rpc
 
+import com.carborioland.mcctl.core.model.AssetCatalog
 import com.carborioland.mcctl.core.model.BackupEntry
 import com.carborioland.mcctl.core.model.Capability
 import com.carborioland.mcctl.core.model.ConfigContent
@@ -376,6 +377,14 @@ class AgentClient(
             if (version.isNotBlank()) put("version", JsonPrimitive(version))
             put("force", JsonPrimitive(force))
         }), VanillaSync.serializer())
+
+    /**
+     * The offline-sync catalog: every icon texture with its crc32 + size. The phone diffs this
+     * against its local cache ([com.carborioland.mcctl.core.model.AssetSyncPlanner]) and fetches
+     * only the missing/changed textures via [iconsFetch]. Read-only; no capability required.
+     */
+    suspend fun assetsCatalog(): AssetCatalog =
+        decode(callRaw("assets.catalog"), AssetCatalog.serializer())
 
     /**
      * Plan a craft against live inventory — no mutation. [count] null = hold-to-max;

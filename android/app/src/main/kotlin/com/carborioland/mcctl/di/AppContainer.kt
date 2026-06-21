@@ -1,6 +1,7 @@
 package com.carborioland.mcctl.di
 
 import android.content.Context
+import com.carborioland.mcctl.assets.AssetSyncManager
 import com.carborioland.mcctl.data.ProfileStore
 import com.carborioland.mcctl.data.ServerRepository
 import com.carborioland.mcctl.data.security.SecureStore
@@ -23,6 +24,9 @@ class AppContainer(context: Context) {
 
     /** EMI item-icon cache: decoded PNGs from `icons.fetch`, persisted under the app cache dir. */
     val iconCache = IconCache(repository, java.io.File(context.applicationContext.cacheDir, "icons"))
+
+    /** Bulk "download every icon for offline use" sync, with an observable progress state. */
+    val assetSyncManager = AssetSyncManager(repository, iconCache, appScope, context.applicationContext)
 
     /** Lazily-synced recipe set powering EMI "what makes / what uses this". */
     val recipeStore = RecipeStore(repository)

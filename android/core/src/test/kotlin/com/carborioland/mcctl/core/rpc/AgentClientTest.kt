@@ -164,6 +164,20 @@ class AgentClientTest {
                 put("status", JsonPrimitive("downloaded"))
                 put("ok", JsonPrimitive(true))
             })
+            "assets.catalog" -> FakeTransport.reply(id, buildJsonObject {
+                put("textures", buildJsonArray {
+                    add(buildJsonObject {
+                        put("id", JsonPrimitive("minecraft:item/stick"))
+                        put("crc", JsonPrimitive(111L)); put("size", JsonPrimitive(40L))
+                    })
+                    add(buildJsonObject {
+                        put("id", JsonPrimitive("minecraft:block/chest"))
+                        put("crc", JsonPrimitive(4294967295L)); put("size", JsonPrimitive(90L))
+                    })
+                })
+                put("count", JsonPrimitive(2))
+                put("bytes", JsonPrimitive(130L))
+            })
             "craft.preview" -> FakeTransport.reply(id, craftPlanFixture(params))
             "craft.do" ->
                 if ("actions" in extraCaps) FakeTransport.reply(id, buildJsonObject {
@@ -452,6 +466,19 @@ class AgentClientTest {
         assertEquals("downloaded", res.status)
         assertEquals("1.21.1", res.version)
         assertTrue(res.jar.endsWith("1.21.1.jar"))
+    }
+
+    @Test
+    fun `assets catalog decodes textures crc size and totals`() = runTest {
+        val client = AgentClient(agent(), backgroundScope).also { it.open() }
+        val cat = client.assetsCatalog()
+        assertEquals(2, cat.count)
+        assertEquals(130L, cat.bytes)
+        assertEquals("minecraft:item/stick", cat.textures[0].id)
+        assertEquals(111L, cat.textures[0].crc)
+        assertEquals(40L, cat.textures[0].size)
+        // crc spans the full uint32 range without overflow (decoded as Long)
+        assertEquals(4294967295L, cat.textures[1].crc)
     }
 
     @Test

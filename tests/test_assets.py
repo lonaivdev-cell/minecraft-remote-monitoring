@@ -117,6 +117,25 @@ def test_build_item_index_includes_extra_referenced_items():
     assert idx == sorted(idx)
 
 
+def test_build_catalog_distinct_textures_sorted():
+    # one texture per item, de-duped to the set the offline sync downloads
+    assert assets.build_catalog(ITEM_MODELS, BLOCK_MODELS) == [
+        "minecraft:block/oak_planks",
+        "minecraft:item/diamond_sword",
+        "minecraft:item/stick",
+        "mymod:block/magic_side",
+    ]
+
+
+def test_build_catalog_drops_unresolvable_and_dedups():
+    items = {
+        "a:one": {"textures": {"layer0": "a:item/shared"}},
+        "a:two": {"textures": {"layer0": "a:item/shared"}},   # same texture -> one entry
+        "a:none": {},                                          # no texture -> dropped
+    }
+    assert assets.build_catalog(items, {}) == ["a:item/shared"]
+
+
 # ----------------------------------------------------------------- listing parse
 
 
@@ -145,6 +164,20 @@ def test_parse_icon_listing_decodes_base64_last_wins():
     ])
     icons = assets.parse_icon_listing(out)
     assert icons["minecraft:item/stick"] == b"\x89PNG-bytes"
+
+
+def test_parse_catalog_listing_decodes_and_last_wins():
+    out = "\n".join([
+        "==H\tminecraft:item/stick\t111\t40",
+        "==H\tminecraft:block/stone\t222\t90",
+        "==H\tminecraft:block/stone\t333\t95",   # later source (resource pack) overrides
+        "==H\tbad\tnot_an_int\t10",              # unparseable -> skipped
+        "noise",
+    ])
+    cat = assets.parse_catalog_listing(out)
+    assert cat["minecraft:item/stick"] == {"crc": 111, "size": 40}
+    assert cat["minecraft:block/stone"] == {"crc": 333, "size": 95}
+    assert "bad" not in cat
 
 
 # ----------------------------------------------------------------- remote passes
@@ -195,6 +228,27 @@ def test_fetch_icons_inlines_wanted_and_decodes(fake_t, tmp_path):
 def test_fetch_icons_empty_is_noop(fake_t, tmp_path):
     assert assets.fetch_icons(fake_t, _cfg(tmp_path), []) == {}
     assert fake_t.calls == []           # no remote round-trip for an empty request
+
+
+def test_hash_textures_inlines_wanted_and_parses(fake_t, tmp_path):
+    captured: dict[str, str] = {}
+
+    def matcher(script: str) -> bool:
+        if "zi.CRC" in script:          # the catalog hasher, not the icon fetcher
+            captured["script"] = script
+            return True
+        return False
+
+    fake_t.expect(matcher, out="==H\tminecraft:item/stick\t987\t411\n")
+    got = assets.hash_textures(fake_t, _cfg(tmp_path),
+                               ["minecraft:item/stick", "minecraft:item/missing"])
+    assert got == {"minecraft:item/stick": {"crc": 987, "size": 411}}
+    assert "assets/minecraft/textures/item/stick.png" in captured["script"]
+
+
+def test_hash_textures_empty_is_noop(fake_t, tmp_path):
+    assert assets.hash_textures(fake_t, _cfg(tmp_path), []) == {}
+    assert fake_t.calls == []
 
 
 def test_scans_include_vanilla_cache_dir(fake_t, tmp_path):
@@ -341,3 +395,27 @@ def test_vanilla_jar_resolves_real_items_end_to_end(tmp_path):
     assert diamond == {"id": "minecraft:diamond", "name": "Diamond", "icon": "minecraft:item/diamond"}
     icons = assets.fetch_icons(t, cfg, ["minecraft:item/diamond"])
     assert icons["minecraft:item/diamond"] == png
+
+
+def test_catalog_lists_real_textures_with_crc_and_size(tmp_path):
+    """The offline-sync catalog reports a real texture's crc32 + size from the jar."""
+    import json as _j
+    import zipfile
+    import zlib
+
+    from mcctl.transport import make_transport
+
+    cfg = _cfg(tmp_path)
+    cache = assets.vanilla_cache_dir(cfg)
+    os.makedirs(cache, exist_ok=True)
+    png = b"\x89PNG\r\n\x1a\n" + b"DIAMOND" * 3
+    with zipfile.ZipFile(os.path.join(cache, "1.21.1.jar"), "w") as z:
+        z.writestr("assets/minecraft/models/item/diamond.json",
+                   _j.dumps({"parent": "item/generated", "textures": {"layer0": "minecraft:item/diamond"}}))
+        z.writestr("assets/minecraft/textures/item/diamond.png", png)
+
+    cat = assets.catalog(make_transport(cfg), cfg)
+    entry = next(e for e in cat["textures"] if e["id"] == "minecraft:item/diamond")
+    assert entry["size"] == len(png)
+    assert entry["crc"] == zlib.crc32(png) & 0xffffffff
+    assert cat["count"] == len(cat["textures"]) and cat["bytes"] >= len(png)

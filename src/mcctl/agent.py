@@ -658,6 +658,15 @@ def _assets_sync(srv: AgentServer, params: dict) -> dict:
                                force=bool(params.get("force", False)))
 
 
+@method("assets.catalog",
+        summary="Offline-sync table of contents: every item-icon texture with its crc32 + byte "
+                "size, so the phone can diff its local cache and download only what changed. "
+                "Pairs with items.manifest (names) and feeds icons.fetch (bytes).")
+def _assets_catalog(srv: AgentServer, params: dict) -> dict:
+    from . import assets
+    return assets.catalog(srv.ctx.t, srv.ctx.cfg)
+
+
 @method("config.tree", params={"mods": "bool"},
         summary="List config/ files (size/mtime/format, best-effort owning mod).")
 def _config_tree(srv: AgentServer, params: dict) -> dict:

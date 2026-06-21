@@ -165,6 +165,20 @@ channel for the app to cache and render offline. Decided 2026-06-20:
       surplus, cycle-safe) rendered on CLI (`recipes search --craftable`, `recipes cost`),
       the agent (`recipes.search craftable=true`, `recipes.cost`), and the phone
       (CraftingScreen toggle + on-demand cost panel).
+- [x] **Offline asset sync + progress bar — bulk "download every icon":** the lazy,
+      per-screen icon fetch is now backed by a proactive bulk sync. New brain pieces
+      (additive, golden schema regenerated): `assets.py` gained `build_catalog` (pure —
+      the distinct icon-texture set) and `hash_textures`/`catalog` (a cheap CRC-32 + size
+      per texture, read from the jar central directory so a 15k-item pack scans fast), and
+      the agent exposes `assets.catalog` (read-only) + CLI `mcctl assets catalog`. On the
+      phone, `:core` gains `AssetCatalog`/`AssetSyncPlanner` (pure, tested — diff the server
+      catalog against the local cache → fetch only what's missing/changed). `:app` gains an
+      `AssetSyncManager` with a byte-accurate progress `StateFlow`: phases (index → catalog →
+      download), foreground-service promotion for the long download, cancel, and
+      **idempotent/resumable** (re-running only pulls deltas). `IconCache` now persists the
+      item index + a CRC sidecar, so a cold start is instant/offline and a resource-pack swap
+      re-fetches just the changed icons. UI: a progress card on `ItemsScreen` ("Download all
+      icons for offline") + an "Offline assets" usage/clear panel in Settings.
 - [ ] **EMI extras (later):** tag-ingredient cycling in slots.
 - [x] **Vanilla icons — PR #2:** a server has no client `assets/` (mods carry their
       own), so `assets.py` now fetches the **matching Mojang client jar** and caches it
