@@ -114,17 +114,34 @@ modpack's crash logs are known to carry prompt-injection text.
 
 ## Upgrading to 2.0.0
 
-`mcctl` was renamed to `lulism`. Run `./update.sh` (or `make update`) and the whole
-migration is automatic:
+`mcctl` was renamed to `lulism`. Run `./update.sh` (or `make update`) and it does
+the whole migration — pipx package, XDG dirs and systemd units — in one pass.
+
+> **Pull first, once.** `update.sh` updates itself, and the pre-2.0.0 copy on the
+> box still looks for the package at `src/mcctl/` — which this release deletes.
+> On a box that is still on 1.1.2, run `git pull` **before** `./update.sh` so the
+> 2.0.0 script is the one that executes. If you forget, the run aborts with
+> `aborted (exit 2)` right after the pipx install; re-running `./update.sh` then
+> completes cleanly, because the pulled script is already in place.
+```fish
+git pull && ./update.sh      # first upgrade from 1.1.2 only
+```
 
 - **Config, state and cache migrate on first run.** `~/.config/mcctl`,
   `~/.local/state/mcctl` and `~/.cache/mcctl` are **copied** (not moved) to their
   `lulism` equivalents the first time `lulism` runs — the old trees are left in
   place as a rollback path, and an existing `lulism` dir is never clobbered.
-- **Systemd units migrate via `lulism watchdog install`:** it stops, disables and
-  removes all seven pre-2.0.0 `mcctl-*` units before installing the `lulism-*`
-  replacements, so you never end up with two restart authorities fighting over the
-  server (the failure mode behind the 2026-06-11 outage).
+  Ephemeral SSH control sockets under `~/.cache/mcctl/run` are skipped, and a
+  copy that fails for any reason logs a warning and leaves the CLI working.
+- **Systemd units are migrated by `update.sh`.** It records which of the seven
+  pre-2.0.0 `mcctl-*` units were enabled or running *before* anything is touched,
+  runs `lulism watchdog install` (stop → disable → remove the old units, write
+  the `lulism-*` ones, reload), then `systemctl --user enable --now`s exactly the
+  replacements of what you had. If any `mcctl-*` unit is still enabled or active
+  afterwards, the script **fails** rather than reporting success — two restart
+  authorities fighting over the server is the 2026-06-11 outage.
+  Installing by hand instead? `lulism watchdog install` does the same migration,
+  and then you enable the replacements yourself.
 - **The old pipx package is removed automatically.** `update.sh` runs
   `pipx uninstall mcctl` for you before reinstalling as `lulism` — no manual
   cleanup needed.
