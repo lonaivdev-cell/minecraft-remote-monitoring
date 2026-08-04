@@ -88,14 +88,8 @@ def test_render_units_ships_all_units():
 def test_render_units_rewrites_execstart_for_pipx():
     from lulism import util
     units = util.render_units(exe="/home/u/.local/bin/mcctl")
-    # NOTE(lulism rename, Task 2): render_units() now matches against
-    # "ExecStart=/usr/bin/lulism " (util.py:262), but the shipped unit files
-    # under src/lulism/units/ still literally say "ExecStart=/usr/bin/mcctl"
-    # until Task 5 renames them. Until then the substitution is a no-op, so
-    # this asserts the current (interim) truth rather than the old pipx
-    # rewrite. Task 5 should restore an assertion that the rewrite actually
-    # happens once the unit files say "/usr/bin/lulism".
-    assert "ExecStart=/usr/bin/mcctl watchdog run" in units["mcctl-watchdog.service"]
+    assert "ExecStart=/home/u/.local/bin/mcctl watchdog run" in units["mcctl-watchdog.service"]
+    assert "/usr/bin/mcctl" not in units["mcctl-watchdog.service"]
     # timers carry no ExecStart and must come through untouched
     assert "OnCalendar=*-*-* 04:30:00" in units["mcctl-backup.timer"]
 

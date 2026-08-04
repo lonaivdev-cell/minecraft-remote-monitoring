@@ -254,7 +254,7 @@ def user_unit_dir() -> Path:
     return _xdg("XDG_CONFIG_HOME", ".config") / "systemd" / "user"
 
 
-def render_units(*, exe: str = "lulism") -> dict[str, str]:
+def render_units(*, exe: str = "mcctl") -> dict[str, str]:
     """The unit files shipped in lulism/units/ (the PKGBUILD installs the same
     files verbatim), with ExecStart rewritten for non-/usr/bin installs (pipx)."""
     from importlib import resources
@@ -263,8 +263,8 @@ def render_units(*, exe: str = "lulism") -> dict[str, str]:
         if not entry.name.endswith((".service", ".timer")):
             continue
         text = entry.read_text(encoding="utf-8")
-        if exe != "/usr/bin/lulism":
-            text = text.replace("ExecStart=/usr/bin/lulism ", f"ExecStart={exe} ")
+        if exe != "/usr/bin/mcctl":
+            text = text.replace("ExecStart=/usr/bin/mcctl ", f"ExecStart={exe} ")
         units[entry.name] = text
     return units
 
