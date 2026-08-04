@@ -638,7 +638,7 @@ git add -A
 git commit -m "feat: migrate pre-2.0.0 mcctl config/state/cache dirs on first run"
 ```
 
-Expected: `410 passed, 1 skipped`.
+Expected: `413 passed, 1 skipped`.
 
 ---
 
@@ -941,7 +941,7 @@ git add -A
 git commit -m "feat: rename systemd units to lulism-* with a stop/disable/remove migration"
 ```
 
-Expected: `416 passed, 1 skipped`. If `tests/test_cli.py` asserts on the old enable-hint string or unit names, update those assertions — they are characterising the strings this task deliberately changes.
+Expected: `419 passed, 1 skipped`. If `tests/test_cli.py` asserts on the old enable-hint string or unit names, update those assertions — they are characterising the strings this task deliberately changes.
 
 ---
 
@@ -1112,7 +1112,7 @@ git add -A
 git commit -m "build: rename the package, units, completions and desktop entry to lulism"
 ```
 
-Expected: `416 passed, 1 skipped`.
+Expected: `419 passed, 1 skipped`.
 
 ---
 
@@ -1270,7 +1270,7 @@ git diff --stat HEAD~7 -- tests/golden/agent_schema_v1.json
 git status --short android/
 ```
 
-Expected: `418 passed, 1 skipped`; ruff clean; **the golden schema diff is empty**; **`android/` is empty**. Those last two are the proof obligations from the spec — if either shows output, stop and investigate before committing.
+Expected: `421 passed, 1 skipped`; ruff clean; **the golden schema diff is empty**; **`android/` is empty**. Those last two are the proof obligations from the spec — if either shows output, stop and investigate before committing.
 
 - [ ] **Step 5: Commit**
 
@@ -1293,7 +1293,7 @@ must be repointed at ~/.local/state/lulism."
 
 Run before opening the PR:
 
-- [ ] `.venv/bin/python -m pytest` → `418 passed, 1 skipped`
+- [ ] `.venv/bin/python -m pytest` → `421 passed, 1 skipped`
 - [ ] `.venv/bin/ruff check src tests` → clean
 - [ ] `git diff --stat main -- tests/golden/agent_schema_v1.json` → empty
 - [ ] `git diff --stat main -- android/` → empty
