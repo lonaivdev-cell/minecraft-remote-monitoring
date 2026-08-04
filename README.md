@@ -142,6 +142,12 @@ git pull && ./update.sh      # first upgrade from 1.1.2 only
   authorities fighting over the server is the 2026-06-11 outage.
   Installing by hand instead? `lulism watchdog install` does the same migration,
   and then you enable the replacements yourself.
+- **`--no-restart` no longer means "touch no units."** In 2.0.0 the unit
+  migration above runs whenever there's something to migrate, `--no-restart`
+  or not — leaving a box half-migrated (old units still enabled, new ones not)
+  is the 2026-06-11 outage, so the flag can't skip it. What it *does* skip is
+  restarting an already-migrated, already-running `lulism-watchdog.service`
+  onto the new code; use it when you'll restart the watchdog yourself.
 - **The old pipx package is removed automatically.** `update.sh` runs
   `pipx uninstall mcctl` for you before reinstalling as `lulism` — no manual
   cleanup needed.

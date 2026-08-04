@@ -261,9 +261,20 @@ if have_user_systemd; then
     if (( UNITS_MIGRATED && ${#LEGACY_SEEN[@]} )); then
       targets=()
       for u in "${LEGACY_SEEN[@]}"; do targets+=("$(new_unit_for "$u")"); done
+      # `systemctl enable --now` does NOT restart a unit that is already
+      # active, so whether the watchdog was actually just started has to be
+      # observed before the call, not assumed from "it's in targets". On a
+      # mixed half-migrated box (a legacy unit still enabled, but
+      # lulism-watchdog.service already running) assuming it would leave the
+      # watchdog running the pre-`pipx install` code while this script claims
+      # otherwise and skips the restart below.
+      wd_active_before=0
+      if unit_active lulism-watchdog.service; then wd_active_before=1; fi
       if systemctl --user enable --now "${targets[@]}"; then
         ok "enabled ${targets[*]}"
-        [[ " ${targets[*]} " == *" lulism-watchdog.service "* ]] && WD_STARTED=1
+        if [[ " ${targets[*]} " == *" lulism-watchdog.service "* ]] && (( ! wd_active_before )); then
+          WD_STARTED=1
+        fi
       else
         err "could not enable ${targets[*]}"; FAILED=1
       fi
@@ -286,20 +297,30 @@ if have_user_systemd; then
     else
       ok "no pre-2.0.0 units left enabled or running"
     fi
-
-    # …and a watchdog that was never a unit at all. `systemctl stop` cannot
-    # reach a daemon someone started by hand, and pacman's replaces=('mcctl')
-    # deletes unit files while their processes keep running, so the unit checks
-    # above can come back clean with two brains alive.
-    wd_procs=$(watchdog_procs)
-    if (( wd_procs > 1 )); then
-      err "$wd_procs watchdog daemons are running — there must be exactly one"
-      info "  pgrep -af '(mcctl|lulism) watchdog run'   # find the extra one, then kill it"
-      FAILED=1
-    fi
   else
     info "systemd units already on the lulism names — nothing to migrate"
   fi
+fi
+
+# A watchdog that was never a unit at all. `systemctl stop` cannot reach a
+# daemon someone started by hand, and pacman's replaces=('mcctl') deletes unit
+# files while their processes keep running, so the unit checks above can come
+# back clean with two brains alive.
+#
+# This has to run on EVERY invocation, not just the one that migrates units:
+# a hand-started `lulism watchdog run` belongs to no unit at all, so the unit
+# checks above come back clean on that run too, and the extra daemon
+# accumulates on an already-migrated box — precisely the run where
+# NEED_UNITS is 0 and the block above never executes. Nesting this inside
+# `if (( NEED_UNITS ))` (or `have_user_systemd`, which it doesn't need — it's
+# pgrep, not the bus) would make the gate blind on exactly the box it exists
+# to catch, and neither `doctor` (WARN, exit 0) nor `--no-restart` would pick
+# up the slack.
+wd_procs=$(watchdog_procs)
+if (( wd_procs > 1 )); then
+  err "$wd_procs watchdog daemons are running — there must be exactly one"
+  info "  pgrep -af '(mcctl|lulism) watchdog run'   # find the extra one, then kill it"
+  FAILED=1
 fi
 
 # Restart the long-running watchdog onto the new code. Oneshot timers (autosave/

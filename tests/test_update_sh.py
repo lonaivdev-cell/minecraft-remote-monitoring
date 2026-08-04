@@ -181,6 +181,80 @@ def test_update_sh_runs_the_unit_migration_and_re_enables_the_replacements():
     assert capture < install.start(), "the legacy units are captured after they are removed"
 
 
+# -------------------------------------------------------------- WD_STARTED
+
+def _extract_reenable_block() -> str:
+    """Pull the "re-enable exactly what was enabled before" snippet -- the one
+    that sets WD_STARTED -- out of update.sh. It's not a named function (it's
+    inline in the migration step), so this grabs it by content instead of by
+    `_extract()`'s name-based match: from the `targets=()` array build through
+    to (but not including) the `elif (( UNITS_MIGRATED ))` that follows it.
+    """
+    text = UPDATE_SH.read_text(encoding="utf-8")
+    m = re.search(r"targets=\(\).*?(?=\n\s*elif \(\( UNITS_MIGRATED \)\))", text, re.S)
+    assert m, "the re-enable block moved or was reworded"
+    return m.group(0)
+
+
+_WD_STARTED_HARNESS = """
+set -euo pipefail
+{new_unit_for}
+unit_active() {{ [[ "$1" == "lulism-watchdog.service" && "$WD_PRE_STATE" == "active" ]]; }}
+systemctl()   {{ return 0; }}   # `enable --now` always "succeeds" in this harness
+ok()  {{ :; }}
+err() {{ :; }}
+LEGACY_SEEN=({legacy_seen})
+UNITS_MIGRATED=1
+FAILED=0
+WD_STARTED=0
+{block}
+printf '%s' "$WD_STARTED"
+"""
+
+
+@pytest.mark.parametrize(("pre_state", "expected"), [
+    # lulism-watchdog.service did not exist yet (first migration): `enable
+    # --now` really does start it, so WD_STARTED=1 is true and the restart
+    # step below is correctly allowed to skip itself.
+    ("inactive", "1"),
+    # a mixed half-migrated box: lulism-watchdog.service is already running
+    # (pre-pipx-install code) when `enable --now` is called on it again. That
+    # call is a no-op, not a start, so WD_STARTED must stay 0 -- the restart
+    # step is what actually gets it onto the new code.
+    ("active", "0"),
+])
+def test_wd_started_reflects_observed_state_not_assumption(pre_state, expected):
+    """WD_STARTED must be set from watching whether lulism-watchdog.service
+    was actually inactive *before* `enable --now`, not merely from the fact
+    that it appears in `targets`. Regression: `systemctl enable --now` does
+    not restart an already-active unit, so asserting WD_STARTED=1 just because
+    the unit was a migration target left a half-migrated box's watchdog
+    running stale code while the script claimed it had "just been started"."""
+    block = _extract_reenable_block()
+    script = _WD_STARTED_HARNESS.format(
+        new_unit_for=_extract("new_unit_for"),
+        legacy_seen="mcctl-watchdog.service",
+        block=block,
+    )
+    out = _bash(f'WD_PRE_STATE="{pre_state}"\n{script}')
+    assert out == expected
+
+
+def test_wd_started_stays_zero_when_watchdog_is_not_a_migration_target():
+    """If lulism-watchdog.service was never enabled/active pre-migration, it's
+    not in `targets`, and WD_STARTED must not be set regardless of its
+    (irrelevant) current activity -- the later restart step needs to see
+    WD_STARTED=0 and take its own "not running, nothing to restart" path."""
+    block = _extract_reenable_block()
+    script = _WD_STARTED_HARNESS.format(
+        new_unit_for=_extract("new_unit_for"),
+        legacy_seen="mcctl-backup.timer",
+        block=block,
+    )
+    out = _bash(f'WD_PRE_STATE="active"\n{script}')
+    assert out == "0"
+
+
 def test_surviving_legacy_units_are_a_failure_not_a_footnote():
     """`doctor` warns about them, but cli.py maps Level.WARN -> exit 0, so a
     doctor warning alone still ends with "lulism is now 2.0.0. done!"."""
@@ -200,6 +274,39 @@ def test_a_second_watchdog_daemon_is_also_a_failure():
     assert m, "the duplicate-daemon check is gone"
     assert "wd_procs > 1" in m.group(0)
     assert "FAILED=1" in m.group(0)
+
+
+def test_duplicate_watchdog_gate_runs_on_every_invocation_not_just_migration():
+    """The `wd_procs > 1` gate must fire on every run, not only the one that
+    performs the unit migration. A hand-started `lulism watchdog run` belongs
+    to no unit at all, so the unit checks above it come back clean regardless
+    -- and it accumulates on an already-migrated box, where NEED_UNITS is 0
+    and `if (( NEED_UNITS ))` never runs, not during the migration itself. If
+    this gate is ever re-nested inside `if (( NEED_UNITS ))` (or even
+    `have_user_systemd`, which it doesn't need -- it only calls pgrep), a box
+    with two live watchdog daemons and nothing left to migrate goes back to
+    printing "done!" and exiting 0, which is the exact bug this finding is
+    about.
+
+    update.sh indents every nested block by two spaces per level (see the
+    `have_user_systemd` / `NEED_UNITS` blocks above), so a column-0 line for
+    the assignment is the structural signal that it is not inside either.
+    """
+    text = UPDATE_SH.read_text(encoding="utf-8")
+    m = re.search(r"^([ \t]*)wd_procs=\$\(watchdog_procs\)$", text, re.M)
+    assert m, "the wd_procs assignment moved or was reworded"
+    assert m.group(1) == "", (
+        f"wd_procs=$(watchdog_procs) is indented {m.group(1)!r}, meaning it "
+        "is nested inside a conditional branch instead of running on every "
+        "invocation"
+    )
+    # and it must be positioned after the have_user_systemd block closes, not
+    # merely dedented while still textually inside it.
+    hus = re.search(r"^if have_user_systemd; then$", text, re.M)
+    assert hus, "have_user_systemd block moved"
+    assert hus.start() < m.start(), (
+        "wd_procs gate sits before the have_user_systemd block opens"
+    )
 
 
 def test_the_script_body_is_one_brace_group():
