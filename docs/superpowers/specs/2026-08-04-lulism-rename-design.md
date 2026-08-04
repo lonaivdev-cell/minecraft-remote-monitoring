@@ -234,7 +234,7 @@ the renamed units use `/usr/bin/lulism`.
 `prometheus.py` exports thirteen metrics, all prefixed `mcctl_`:
 
 ```
-mcctl_up  mcctl_tps  mcctl_players  mcctl_load  mcctl_mspt_milliseconds
+mcctl_up  mcctl_tps  mcctl_players  mcctl_load1  mcctl_mspt_milliseconds
 mcctl_heap_used_bytes  mcctl_heap_max_bytes  mcctl_disk_free_bytes
 mcctl_log_age_seconds  mcctl_scrape_timestamp_seconds
 mcctl_host_mem_used_bytes  mcctl_host_mem_total_bytes
