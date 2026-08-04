@@ -1,7 +1,7 @@
 # Maintainer: CarborioLand <lorenzods.ls1@gmail.com>
 # Local/dev PKGBUILD: build straight from this checkout with `makepkg -si`.
 pkgname=lulism
-pkgver=1.1.2
+pkgver=2.0.0
 pkgrel=1
 pkgdesc="Legit Ultimate Linux Server Monitor — remote control & monitoring for game servers and hosts over SSH"
 arch=('any')

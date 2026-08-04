@@ -1,3 +1,3 @@
 """lulism — remote control & monitoring for a modded Minecraft server over SSH."""
 
-__version__ = "1.1.2"
+__version__ = "2.0.0"
