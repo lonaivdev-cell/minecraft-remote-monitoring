@@ -127,7 +127,12 @@ fi
 
 # 2.0.0: the pipx package itself was renamed. Removing the old one first stops
 # the two packages fighting over the `mcctl` binary the shim needs to install.
-if pipx list --short 2>/dev/null | grep -q '^mcctl '; then
+# `pipx list` can exit non-zero for reasons unrelated to `mcctl` (e.g. some other
+# pipx venv is broken), so its exit status must not feed this `if` under
+# `pipefail` — capture the grep match into a variable instead, or an unrelated
+# stale venv silently skips the uninstall we need here.
+mcctl_pipx=$(pipx list --short 2>/dev/null | grep '^mcctl ' || true)
+if [[ -n "$mcctl_pipx" ]]; then
   step "Removing the pre-2.0.0 pipx package"
   pipx uninstall mcctl && ok "old mcctl pipx package removed"
 fi
