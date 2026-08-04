@@ -173,25 +173,18 @@ git mv src/mcctl src/lulism
 APP = "lulism"
 ```
 
-`src/lulism/util.py:257-262` — the `resources.files()` argument is the one that raises at runtime if missed:
+`src/lulism/util.py:262` — change **only** the `resources.files()` argument, which is the one that raises at runtime if missed:
 
 ```python
-def render_units(*, exe: str = "lulism") -> dict[str, str]:
-    """The unit files shipped in lulism/units/ (the PKGBUILD installs the same
-    files verbatim), with ExecStart rewritten for non-/usr/bin installs (pipx)."""
-    from importlib import resources
-    units: dict[str, str] = {}
     for entry in (resources.files("lulism") / "units").iterdir():
-        if not entry.name.endswith((".service", ".timer")):
-            continue
-        text = entry.read_text(encoding="utf-8")
-        if exe != "/usr/bin/lulism":
-            text = text.replace("ExecStart=/usr/bin/lulism ", f"ExecStart={exe} ")
-        units[entry.name] = text
-    return units
 ```
 
-The unit files themselves still say `ExecStart=/usr/bin/mcctl` at this point — Task 5 renames them. That is fine: `render_units` simply finds nothing to replace, and no test asserts on `ExecStart` until Task 5.
+**Leave `exe: str = "mcctl"` and the `"ExecStart=/usr/bin/mcctl "` match string alone.** Those describe the *unit files*, which still say `ExecStart=/usr/bin/mcctl` until Task 5 renames them. Changing the code's match string here while the data still says `mcctl` would make the substitution a guaranteed no-op, which silently hollows out two existing tests in `tests/test_util.py`:
+
+- `test_render_units_rewrites_execstart_for_pipx` would assert a rewrite that no longer happens
+- `test_render_units_keeps_usrbin_for_system_install` would pass by accident, matching nothing
+
+Task 5 changes these two strings and the unit files together, atomically, so code and data never disagree. Leaving them here means all three `render_units` tests pass **unmodified** in this task — if you find yourself editing them, stop: that is the signal you changed a string you shouldn't have.
 
 - [ ] **Step 3: Point `pyproject.toml` at the moved version attribute**
 
@@ -739,6 +732,55 @@ Then read all seven and confirm by eye that `Description=`, `ExecStart=`, and an
 
 ```bash
 grep -n 'Description=\|ExecStart=\|Unit=\|Requires=\|After=' src/lulism/units/*
+```
+
+- [ ] **Step 4a: Switch `render_units` to the lulism ExecStart, atomically with the file rename**
+
+Task 2 deliberately left these two strings alone so the code never disagreed with the unit files. Now that Step 4 has rewritten the units to `ExecStart=/usr/bin/lulism`, change both in `src/lulism/util.py:257,266-267`:
+
+```python
+def render_units(*, exe: str = "lulism") -> dict[str, str]:
+    """The unit files shipped in lulism/units/ (the PKGBUILD installs the same
+    files verbatim), with ExecStart rewritten for non-/usr/bin installs (pipx)."""
+    from importlib import resources
+    units: dict[str, str] = {}
+    for entry in (resources.files("lulism") / "units").iterdir():
+        if not entry.name.endswith((".service", ".timer")):
+            continue
+        text = entry.read_text(encoding="utf-8")
+        if exe != "/usr/bin/lulism":
+            text = text.replace("ExecStart=/usr/bin/lulism ", f"ExecStart={exe} ")
+        units[entry.name] = text
+    return units
+```
+
+- [ ] **Step 4b: Update the three existing `render_units` tests to the new unit names**
+
+`tests/test_util.py` has three tests that name the old units and paths. They must keep asserting real behaviour — the pipx rewrite must still be proven to *happen*:
+
+```python
+def test_render_units_ships_all_units():
+    from lulism import util
+    units = util.render_units()
+    assert set(units) == {"lulism-watchdog.service", "lulism-autosave.service",
+                          "lulism-autosave.timer", "lulism-backup.service",
+                          "lulism-backup.timer", "lulism-metrics.service",
+                          "lulism-metrics.timer"}
+
+
+def test_render_units_rewrites_execstart_for_pipx():
+    from lulism import util
+    units = util.render_units(exe="/home/u/.local/bin/lulism")
+    assert "ExecStart=/home/u/.local/bin/lulism watchdog run" in units["lulism-watchdog.service"]
+    assert "/usr/bin/lulism" not in units["lulism-watchdog.service"]
+    # timers carry no ExecStart and must come through untouched
+    assert "OnCalendar=*-*-* 04:30:00" in units["lulism-backup.timer"]
+
+
+def test_render_units_keeps_usrbin_for_system_install():
+    from lulism import util
+    units = util.render_units(exe="/usr/bin/lulism")
+    assert "ExecStart=/usr/bin/lulism save --skip-if-down" in units["lulism-autosave.service"]
 ```
 
 - [ ] **Step 5: Add the migration helpers**
