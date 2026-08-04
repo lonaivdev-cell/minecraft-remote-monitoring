@@ -1377,7 +1377,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help="-v info, -vv debug on stderr")
 
     p = argparse.ArgumentParser(
-        prog="mcctl",
+        prog="lulism",
         description="Remote control & monitoring for a modded Minecraft server over SSH.",
         epilog="start here: mcctl init  ->  mcctl doctor  ->  mcctl start  ->  mcctl dash",
         parents=[common],

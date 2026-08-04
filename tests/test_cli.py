@@ -18,7 +18,7 @@ SUBCOMMANDS = [
 
 def test_parser_builds():
     p = cli.build_parser()
-    assert p.prog == "mcctl"
+    assert p.prog == "lulism"
 
 
 @pytest.mark.parametrize("sub", SUBCOMMANDS)

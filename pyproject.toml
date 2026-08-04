@@ -18,10 +18,11 @@ dev = ["pytest>=7", "ruff>=0.4"]
 ai = ["anthropic>=0.69"]
 
 [project.scripts]
-mcctl = "mcctl.cli:main"
+lulism = "lulism.cli:main"
+mcctl = "lulism.shim:main"          # deprecated bridge, removed at 3.0.0
 
 [project.gui-scripts]
-mcctl-gui = "mcctl.gui:main"
+lulism-gui = "lulism.gui:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
