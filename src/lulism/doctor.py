@@ -329,7 +329,7 @@ def _ops_checks(cfg: Config, t: BaseTransport, *, fix: bool) -> list[CheckResult
     # exactly like two restart authorities did, just across machines.
     local_wd = _local_watchdog_active()
     if s.transport == "ssh":
-        r = t.run("pgrep -af 'mcctl watchdog run' 2>/dev/null | grep -v pgrep || true",
+        r = t.run("pgrep -af '(mcctl|lulism) watchdog run' 2>/dev/null | grep -v pgrep || true",
                   timeout=15)
         box_wd = bool(r.out.strip())
         if box_wd and local_wd:
@@ -388,7 +388,12 @@ def _unit_is_enabled(unit: str) -> bool:
 
 
 def _local_watchdog_active() -> bool:
-    """Is an `mcctl watchdog run` daemon alive on THIS machine (unit or loose process)?"""
+    """Is a `lulism watchdog run` daemon alive on THIS machine (unit or loose
+    process)? The loose-process check also matches a leftover pre-migration
+    `mcctl watchdog run` process, so a half-migrated box (old unit disabled but
+    a daemon still running loose) is still detected rather than reported as
+    "no watchdog" -- a false negative there would prompt a second watchdog and
+    reproduce the 2026-06-11 two-restart-authorities incident."""
     try:
         r = subprocess.run(["systemctl", "--user", "is-active", "--quiet",
                             "lulism-watchdog.service"], timeout=5, capture_output=True)
@@ -397,7 +402,8 @@ def _local_watchdog_active() -> bool:
     except (OSError, subprocess.TimeoutExpired):
         pass
     try:
-        r = subprocess.run(["pgrep", "-f", "mcctl watchdog run"], timeout=5, capture_output=True)
+        r = subprocess.run(["pgrep", "-f", "(mcctl|lulism) watchdog run"],
+                           timeout=5, capture_output=True)
         return r.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         return False

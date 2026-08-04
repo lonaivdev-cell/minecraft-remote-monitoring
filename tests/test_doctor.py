@@ -100,6 +100,35 @@ def test_ops_root_mount_needs_no_nofail(fake_t, cfg):
 # ---------------- brain placement (DESIGN-BRAIN.md): one watchdog, on the box
 
 
+def test_local_watchdog_loose_process_pattern_covers_both_names(monkeypatch):
+    """_local_watchdog_active()'s pgrep fallback (used when the systemd unit
+    isn't the one running -- a manual `lulism watchdog run &`, a dev
+    invocation, or a stop that didn't fully reap the process) must catch a
+    daemon under either name. A pattern that only matches the post-2.0.0
+    `lulism watchdog run` would report "no watchdog" for a leftover
+    pre-migration `mcctl watchdog run` process, which is a false negative that
+    feeds the brain-placement check and can prompt a second watchdog -- the
+    2026-06-11 two-restart-authorities incident this task exists to prevent."""
+    import re
+    import subprocess
+
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(list(cmd))
+        return subprocess.CompletedProcess(cmd, 1)  # "not active" / "not found"
+
+    monkeypatch.setattr(doctor_mod.subprocess, "run", fake_run)
+    assert doctor_mod._local_watchdog_active() is False
+
+    pgrep_calls = [c for c in calls if c[:2] == ["pgrep", "-f"]]
+    assert len(pgrep_calls) == 1, calls
+    pattern = pgrep_calls[0][2]
+    assert re.search(pattern, "mcctl watchdog run"), pattern
+    assert re.search(pattern, "lulism watchdog run"), pattern
+    assert not re.search(pattern, "totally unrelated process"), pattern
+
+
 def _refuse(*a, **k):
     raise OSError("closed")
 
@@ -116,7 +145,7 @@ def _ssh_mode(cfg, monkeypatch, *, local_wd: bool):
 def test_brain_on_box_with_linger_is_the_target_topology(fake_t, cfg, monkeypatch):
     _layout(fake_t, cfg)
     _ssh_mode(cfg, monkeypatch, local_wd=False)
-    fake_t.expect("pgrep -af 'mcctl watchdog run'",
+    fake_t.expect("pgrep -af '(mcctl|lulism) watchdog run'",
                   out="888 python3 /usr/bin/mcctl watchdog run\n")
     fake_t.expect("loginctl show-user", out="Linger=yes\n")
     res = _by_name(run_doctor(cfg, fake_t))
@@ -128,7 +157,7 @@ def test_brain_on_box_with_linger_is_the_target_topology(fake_t, cfg, monkeypatc
 def test_brain_on_box_without_linger_warns(fake_t, cfg, monkeypatch):
     _layout(fake_t, cfg)
     _ssh_mode(cfg, monkeypatch, local_wd=False)
-    fake_t.expect("pgrep -af 'mcctl watchdog run'",
+    fake_t.expect("pgrep -af '(mcctl|lulism) watchdog run'",
                   out="888 python3 /usr/bin/mcctl watchdog run\n")
     fake_t.expect("loginctl show-user", out="Linger=no\n")
     res = _by_name(run_doctor(cfg, fake_t))
@@ -140,7 +169,7 @@ def test_brain_on_box_without_linger_warns(fake_t, cfg, monkeypatch):
 def test_two_brains_warn_loudly(fake_t, cfg, monkeypatch):
     _layout(fake_t, cfg)
     _ssh_mode(cfg, monkeypatch, local_wd=True)
-    fake_t.expect("pgrep -af 'mcctl watchdog run'",
+    fake_t.expect("pgrep -af '(mcctl|lulism) watchdog run'",
                   out="888 python3 /usr/bin/mcctl watchdog run\n")
     res = _by_name(run_doctor(cfg, fake_t))
     assert res["ops: brain placement"].level is Level.WARN
