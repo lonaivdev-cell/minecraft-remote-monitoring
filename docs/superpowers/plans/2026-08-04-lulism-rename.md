@@ -323,6 +323,29 @@ def test_exit_codes_pass_through(args, code):
     r = subprocess.run([str(SCRIPTS / "mcctl"), *args],
                        capture_output=True, text=True, env=env, timeout=60)
     assert r.returncode == code
+
+
+@pytest.mark.integration
+def test_works_when_scripts_dir_is_not_on_path():
+    """The field case: systemd user units and non-interactive SSH both run with
+    a minimal PATH that excludes ~/.local/bin, where pipx puts both scripts."""
+    r = subprocess.run([str(SCRIPTS / "mcctl"), "agent", "--schema"],
+                       capture_output=True, text=True, timeout=60,
+                       env={"PATH": "/usr/bin:/bin", "HOME": os.environ.get("HOME", "/tmp")})
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["protocol"] == 1
+
+
+def test_reports_exec_failure_on_stderr(monkeypatch, capsys):
+    def boom(file, args):
+        raise OSError(2, "No such file or directory")
+
+    monkeypatch.setattr(os, "execvp", boom)
+    monkeypatch.setattr(shim, "_target", lambda: "lulism")
+    assert shim.main(["status"]) == 1
+    out = capsys.readouterr()
+    assert out.out == ""
+    assert "cannot exec lulism" in out.err
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -350,11 +373,28 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
 NOTICE = (
     "mcctl: deprecated, and removed in 3.0.0 — use `lulism` instead.\n"
     "mcctl: on the phone, set Settings → agent command to `lulism agent`.\n"
 )
+
+
+def _target() -> str:
+    """Resolve `lulism` next to this script before falling back to PATH.
+
+    A bare-name execvp searches PATH, and the contexts this shim exists to
+    serve are exactly the ones with a minimal PATH: systemd user units (whose
+    default PATH excludes ~/.local/bin) and non-interactive SSH sessions (how
+    the phone invokes `mcctl agent`). pipx installs both scripts into the same
+    directory, so the sibling lookup succeeds precisely where PATH does not.
+    """
+    try:
+        sibling = Path(sys.argv[0]).resolve().with_name("lulism")
+    except (OSError, ValueError):
+        return "lulism"
+    return str(sibling) if sibling.exists() else "lulism"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -363,8 +403,9 @@ def main(argv: list[str] | None = None) -> int:
     sys.stderr.flush()
     # execvp replaces this process: exit codes, signals and stdio wiring all
     # pass through untouched, which a subprocess wrapper would not guarantee.
+    # argv[0] stays "lulism" so the child's own prog name is right.
     try:
-        os.execvp("lulism", ["lulism", *args])
+        os.execvp(_target(), ["lulism", *args])
     except OSError as e:
         sys.stderr.write(f"mcctl: cannot exec lulism: {e}\n")
         return 1
