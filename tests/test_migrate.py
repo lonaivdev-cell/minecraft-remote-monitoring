@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from lulism import util
+from lulism import cli, util
 from lulism.config import Config
 
 V112_CONFIG = """\
@@ -88,3 +88,19 @@ def test_is_idempotent_and_never_clobbers(isolated_xdg):
 def test_no_legacy_dir_is_a_noop(isolated_xdg):
     assert util.migrate_legacy_dirs() == []
     assert not util.config_dir().exists()
+
+
+def test_migration_actually_runs_through_cli_main(isolated_xdg):
+    """Regression: cli.main() calls util.setup_logging(), which calls
+    util.ensure_dirs(), which pre-creates config_dir()/state_dir()/cache_dir()
+    as empty directories. migrate_legacy_dirs() skips any destination that
+    already exists, so if it ran *after* setup_logging() it would find those
+    dirs already present and silently never migrate anything for a real CLI
+    invocation. This exercises the real entry point end-to-end, not just the
+    util function in isolation, to guard against that ordering regression.
+    """
+    (_legacy(isolated_xdg, "cfg") / "config.toml").write_text(V112_CONFIG, encoding="utf-8")
+
+    assert cli.main([]) == 2  # no subcommand: prints help, exits 2
+
+    assert (util.config_dir() / "config.toml").read_text(encoding="utf-8") == V112_CONFIG

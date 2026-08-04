@@ -1752,8 +1752,12 @@ def main(argv: list[str] | None = None) -> int:
         args.config = None
     if not hasattr(args, "verbose"):
         args.verbose = 0
-    util.setup_logging(args.verbose)
+    # Must run before setup_logging(): setup_logging() -> ensure_dirs() pre-creates
+    # config_dir()/state_dir()/cache_dir() as empty dirs, and migrate_legacy_dirs()
+    # skips any destination that already exists — calling it afterward would make
+    # the migration a permanent no-op for every real invocation.
     util.migrate_legacy_dirs()
+    util.setup_logging(args.verbose)
     if not getattr(args, "func", None):
         parser.print_help()
         return 2
