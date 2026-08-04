@@ -104,3 +104,28 @@ def test_migration_actually_runs_through_cli_main(isolated_xdg):
     assert cli.main([]) == 2  # no subcommand: prints help, exits 2
 
     assert (util.config_dir() / "config.toml").read_text(encoding="utf-8") == V112_CONFIG
+
+
+def test_cli_reannounces_migration_after_setup_logging(isolated_xdg, caplog):
+    """Regression: util.migrate_legacy_dirs()'s own log.info() fires through the
+    "lulism" logger *before* cli.main() calls util.setup_logging() (it has to,
+    see test_migration_actually_runs_through_cli_main above) -- so on a real
+    first-ever invocation, no handlers exist yet and that record is silently
+    dropped: nothing reaches the console or the log file, even under -v. That
+    defeats the point of the migration announcing itself in exactly the
+    "where did my config go?" scenario this feature exists for.
+
+    cli.main() must re-announce each migrated pair through its own logger once
+    setup_logging() has actually configured handlers. Its wording ("original
+    kept as rollback path") is deliberately distinct from util.py's own message
+    ("the original is kept as a rollback path"), so this assertion only matches
+    the re-announcement -- it fails if that re-announcement is removed, even if
+    util.py's own (dropped, in real use) call happens to be visible under the
+    test harness's own log capturing.
+    """
+    (_legacy(isolated_xdg, "cfg") / "config.toml").write_text(V112_CONFIG, encoding="utf-8")
+
+    with caplog.at_level("INFO"):
+        assert cli.main(["-v"]) == 2
+
+    assert any("original kept as rollback path" in r.getMessage() for r in caplog.records)
