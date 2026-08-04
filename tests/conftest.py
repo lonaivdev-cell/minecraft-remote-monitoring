@@ -8,8 +8,8 @@ from collections import deque
 
 import pytest
 
-from mcctl.config import Config
-from mcctl.transport import BaseTransport, RunResult, TransportError
+from lulism.config import Config
+from lulism.transport import BaseTransport, RunResult, TransportError
 
 
 @pytest.fixture(autouse=True)

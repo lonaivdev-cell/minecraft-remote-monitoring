@@ -1,7 +1,7 @@
 import pytest
 
-from mcctl import metrics
-from mcctl.config import Config
+from lulism import metrics
+from lulism.config import Config
 
 HEAP_INFO_J17 = """\
 4242:

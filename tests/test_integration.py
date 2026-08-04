@@ -18,11 +18,11 @@ import uuid
 
 import pytest
 
-from mcctl.backup import BackupManager
-from mcctl.config import Config
-from mcctl.console import Console
-from mcctl.server import ServerControl
-from mcctl.transport import LocalTransport
+from lulism.backup import BackupManager
+from lulism.config import Config
+from lulism.console import Console
+from lulism.server import ServerControl
+from lulism.transport import LocalTransport
 
 pytestmark = [
     pytest.mark.integration,
@@ -110,7 +110,7 @@ def test_full_lifecycle(sandbox):
     assert "Automatic saving is now enabled" in log_text
 
     # ---- restore refuses while up
-    from mcctl.backup import BackupError
+    from lulism.backup import BackupError
     with pytest.raises(BackupError, match="running"):
         mgr.restore(entry.name)
 
@@ -133,7 +133,7 @@ def test_start_twice_refused(sandbox):
     ctl = ServerControl(cfg, t)
     ctl.start(wait=True)
     try:
-        from mcctl.server import ServerError
+        from lulism.server import ServerError
         with pytest.raises(ServerError, match="already running"):
             ctl.start(wait=True)
     finally:
@@ -145,8 +145,8 @@ def test_adopt_running_session_on_reopen(sandbox):
     with a config that expects a *different* tmux session name (e.g. a fresh install
     after an update) — and it discovers + connects to the live session instead of
     forcing an ssh-in/stop/restart."""
-    from mcctl import state
-    from mcctl.console import Console
+    from lulism import state
+    from lulism.console import Console
 
     cfg = sandbox
     t = LocalTransport(cfg)

@@ -1,6 +1,6 @@
 """charts: sparkline / block chart / summary — pure, no I/O."""
 
-from mcctl import charts
+from lulism import charts
 
 
 def test_sparkline_maps_range_and_handles_empty():

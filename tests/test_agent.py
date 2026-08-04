@@ -8,8 +8,8 @@ import json
 
 import pytest
 
-from mcctl import agent, events
-from mcctl.cli import Ctx
+from lulism import agent, events
+from lulism.cli import Ctx
 
 
 @pytest.fixture
@@ -60,7 +60,7 @@ def test_capability_gating(srv):
 
 
 def test_assets_catalog_is_read_only_and_passes_through(srv, monkeypatch):
-    from mcctl import assets
+    from lulism import assets
     monkeypatch.setattr(assets, "catalog", lambda t, cfg: {
         "textures": [{"id": "minecraft:item/stick", "crc": 1, "size": 2}],
         "count": 1, "bytes": 2,

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from mcctl.config import Config
-from mcctl.watchdog import Action, Observation, decide
+from lulism.config import Config
+from lulism.watchdog import Action, Observation, decide
 
 NOW = 1_750_000_000.0
 

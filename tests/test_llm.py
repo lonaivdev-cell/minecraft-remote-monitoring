@@ -6,8 +6,8 @@ import types
 
 import pytest
 
-from mcctl import llm
-from mcctl.config import Config
+from lulism import llm
+from lulism.config import Config
 
 
 def test_redact_masks_rcon_password():

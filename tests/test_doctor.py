@@ -5,9 +5,9 @@ Driven entirely through FakeTransport."""
 
 from __future__ import annotations
 
-from mcctl import doctor as doctor_mod
-from mcctl import state
-from mcctl.doctor import Level, run_doctor
+from lulism import doctor as doctor_mod
+from lulism import state
+from lulism.doctor import Level, run_doctor
 
 VARIABLES = (
     'SKIP_JAVA_CHECK="true"\n'

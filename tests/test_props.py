@@ -1,6 +1,6 @@
 import pytest
 
-from mcctl.props import (
+from lulism.props import (
     PropError,
     PropertiesFile,
     get_var,
@@ -132,7 +132,7 @@ def test_set_heap_requires_java_args():
 
 
 def test_known_props_specs_are_well_formed():
-    from mcctl.props import KNOWN_PROPS
+    from lulism.props import KNOWN_PROPS
     for key, spec in KNOWN_PROPS.items():
         assert spec.type in ("bool", "int", "str", "enum"), key
         if spec.type == "enum":

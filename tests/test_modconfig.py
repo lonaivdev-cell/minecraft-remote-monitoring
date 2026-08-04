@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from mcctl import modconfig as MC
-from mcctl.mods import ModInfo
-from mcctl.transport import LocalTransport
+from lulism import modconfig as MC
+from lulism.mods import ModInfo
+from lulism.transport import LocalTransport
 
 # ---------------------------------------------------------------- pure helpers
 

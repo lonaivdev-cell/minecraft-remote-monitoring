@@ -5,7 +5,7 @@ and safe (regenerate the golden, commit it consciously) or it is breaking (bump
 agent.AGENT_PROTOCOL and ship a new golden). The point is that the contract a
 shipped phone binary depends on can never drift by accident.
 
-Regenerate:  python -c "import json,sys; sys.path.insert(0,'src'); from mcctl \
+Regenerate:  python -c "import json,sys; sys.path.insert(0,'src'); from lulism \
 import agent; json.dump(agent.build_schema(), open('tests/golden/agent_schema_v1.json','w'), \
 indent=2, sort_keys=True); open('tests/golden/agent_schema_v1.json','a').write('\\n')"
 """
@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from mcctl import agent
+from lulism import agent
 
 GOLDEN = Path(__file__).parent / "golden" / "agent_schema_v1.json"
 

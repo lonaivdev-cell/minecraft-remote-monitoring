@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from mcctl import events, postmortem, state
+from lulism import events, postmortem, state
 
 # Mirrors the real 2026-06-11 CarborioLand crash report: a mod-API mismatch with
 # prompt-injection text embedded above the stack trace.

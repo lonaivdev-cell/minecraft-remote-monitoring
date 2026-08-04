@@ -1,6 +1,6 @@
 """tracer: jstat -gcutil parsing and GC delta computation (pure)."""
 
-from mcctl import tracer
+from lulism import tracer
 
 HEADER = "  S0     S1     E      O      M     CCS    YGC     YGCT    FGC    FGCT     CGC    CGCT      GCT"
 ROW1 = "  0.00  31.25  18.30  45.10  95.20  92.10   100    45.678     5    8.901      0    0.000    54.579"

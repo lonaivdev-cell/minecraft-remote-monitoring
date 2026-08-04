@@ -1,7 +1,7 @@
 import pytest
 
-from mcctl import logs
-from mcctl.config import Config
+from lulism import logs
+from lulism.config import Config
 
 
 def test_tail_sanitizes(fake_t):

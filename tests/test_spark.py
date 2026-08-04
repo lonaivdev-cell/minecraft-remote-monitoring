@@ -1,6 +1,6 @@
 import pytest
 
-from mcctl.spark import Spark, SparkError, parse_health, parse_tps
+from lulism.spark import Spark, SparkError, parse_health, parse_tps
 
 # Realistic spark output, with Minecraft § color codes sprinkled in.
 TPS_TEXT = """\

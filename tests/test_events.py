@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from mcctl import events
+from lulism import events
 
 
 class _Stop(Exception):

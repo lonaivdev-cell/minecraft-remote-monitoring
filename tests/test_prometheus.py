@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from mcctl import metrics, prometheus
-from mcctl.config import Config
+from lulism import metrics, prometheus
+from lulism.config import Config
 
 
 def _parse(text: str) -> dict[str, str]:
@@ -51,12 +51,12 @@ def test_export_writes_atomically(tmp_path):
     metrics.append_sample({"running": True, "players": 1, "tps": 20.0})
     cfg = Config()
     cfg.server.transport = "local"
-    out = tmp_path / "mcctl.prom"
+    out = tmp_path / "lulism.prom"
     p = prometheus.export(cfg, out=out)
     assert p == out
     text = out.read_text()
     assert "mcctl_up" in text and "mcctl_players" in text
-    assert not (tmp_path / "mcctl.prom.tmp").exists()  # tmp renamed away
+    assert not (tmp_path / "lulism.prom.tmp").exists()  # tmp renamed away
 
 
 def test_export_with_no_samples_reports_down(tmp_path):

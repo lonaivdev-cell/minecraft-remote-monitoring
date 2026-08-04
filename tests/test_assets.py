@@ -9,8 +9,8 @@ import os
 
 import pytest
 
-from mcctl import assets
-from mcctl.config import Config
+from lulism import assets
+from lulism.config import Config
 
 # ---- model fixtures: a generated item, a handheld, and two block items -------
 
@@ -376,7 +376,7 @@ def test_vanilla_jar_resolves_real_items_end_to_end(tmp_path):
     import json as _j
     import zipfile
 
-    from mcctl.transport import make_transport
+    from lulism.transport import make_transport
 
     cfg = _cfg(tmp_path)
     cache = assets.vanilla_cache_dir(cfg)
@@ -403,7 +403,7 @@ def test_catalog_lists_real_textures_with_crc_and_size(tmp_path):
     import zipfile
     import zlib
 
-    from mcctl.transport import make_transport
+    from lulism.transport import make_transport
 
     cfg = _cfg(tmp_path)
     cache = assets.vanilla_cache_dir(cfg)

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from mcctl.config import Config
-from mcctl.console import Console, PlayerList
+from lulism.config import Config
+from lulism.console import Console, PlayerList
 
 
 def _cfg() -> Config:
@@ -73,7 +73,7 @@ def test_send_falls_back_to_tmux_when_rcon_connection_resets(fake_t, monkeypatch
     """server.properties advertises RCON, but the live server resets the connection
     (RCON not actually serving). send() must fall back to tmux, not raise — this is
     the bug where a running server showed up as 'unreachable'."""
-    import mcctl.console as C
+    import lulism.console as C
     cfg = _cfg()
     fake_t.files[f"{cfg.server.server_dir}/server.properties"] = (
         "enable-rcon=true\nrcon.port=25575\nrcon.password=x\n"

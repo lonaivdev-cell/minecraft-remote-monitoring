@@ -6,8 +6,8 @@ import json
 
 import pytest
 
-import mcctl.cli as cli
-from mcctl.config import Config
+import lulism.cli as cli
+from lulism.config import Config
 
 SUBCOMMANDS = [
     "init", "doctor", "status", "start", "stop", "restart", "kill", "console", "cmd",
@@ -89,7 +89,7 @@ def test_history_empty(tmp_path, capsys):
 
 
 def test_history_charts_recorded_samples(tmp_path, capsys):
-    from mcctl import metrics
+    from lulism import metrics
     cfgfile = tmp_path / "c.toml"
     cli.main(["init", "--config", str(cfgfile)])
     for tps in (20.0, 19.5, 18.0, 12.0):
@@ -107,7 +107,7 @@ def test_ai_chat_subcommand_parses():
 
 
 def test_watchdog_arm_disarm(tmp_path, capsys):
-    from mcctl import state
+    from lulism import state
     cfgfile = tmp_path / "c.toml"
     cli.main(["init", "--config", str(cfgfile)])
     assert cli.main(["watchdog", "arm", "--config", str(cfgfile)]) == 0
@@ -153,7 +153,7 @@ def test_backup_list_empty(tmp_path, monkeypatch, capsys, fake_t):
 
 
 def test_transport_error_exit_code(tmp_path, monkeypatch, capsys, fake_t):
-    from mcctl.transport import TransportError
+    from lulism.transport import TransportError
     cfgfile = tmp_path / "c.toml"
     cli.main(["init", "--config", str(cfgfile)])
     _wire_fake(monkeypatch, fake_t)
@@ -162,8 +162,8 @@ def test_transport_error_exit_code(tmp_path, monkeypatch, capsys, fake_t):
 
 
 def test_watchdog_install_writes_units_to_xdg(isolated_xdg, capsys):
-    from mcctl import util
-    from mcctl.cli import _install_units
+    from lulism import util
+    from lulism.cli import _install_units
     assert _install_units() == 0
     written = sorted(p.name for p in util.user_unit_dir().iterdir())
     assert "mcctl-watchdog.service" in written and len(written) == 7

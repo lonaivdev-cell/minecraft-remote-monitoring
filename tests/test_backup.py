@@ -6,7 +6,7 @@ import datetime as dt
 
 import pytest
 
-from mcctl.backup import (
+from lulism.backup import (
     BackupEntry,
     BackupError,
     BackupManager,
@@ -90,7 +90,7 @@ def _mgr(cfg, fake_t, running: bool):
 
 def test_create_orders_saveoff_tar_saveon(cfg, fake_t, clock, monkeypatch):
     mgr = _mgr(cfg, fake_t, running=True)
-    monkeypatch.setattr("mcctl.console.time", clock)
+    monkeypatch.setattr("lulism.console.time", clock)
     fake_t.expect("df -B1 --output=avail", out=str(50 * 1024**3))
     fake_t.expect("command -v zstd", rc=0)
     fake_t.expect("tar -cf -", out="123456\n")
@@ -102,9 +102,9 @@ def test_create_orders_saveoff_tar_saveon(cfg, fake_t, clock, monkeypatch):
 
 
 def test_create_reenables_save_on_failure(cfg, fake_t, clock, monkeypatch):
-    from mcctl.transport import TransportError
+    from lulism.transport import TransportError
     mgr = _mgr(cfg, fake_t, running=True)
-    monkeypatch.setattr("mcctl.console.time", clock)
+    monkeypatch.setattr("lulism.console.time", clock)
     fake_t.expect("df -B1 --output=avail", out=str(50 * 1024**3))
     fake_t.expect("command -v zstd", rc=0)
     fake_t.expect("tar -cf -", TransportError("disk exploded"))
@@ -293,7 +293,7 @@ def test_offsite_propagates_failure(cfg, fake_t):
 def test_full_excludes_outside_server_dir(cfg):
     cfg.server.server_dir = "/opt/minecraft"
     cfg.backup.remote_dir = "/opt/minecraft-backups"
-    from mcctl.backup import full_backup_excludes
+    from lulism.backup import full_backup_excludes
     out = full_backup_excludes(cfg)
     assert out == cfg.backup.full_excludes  # sibling dir: no self-exclude needed
 
@@ -301,7 +301,7 @@ def test_full_excludes_outside_server_dir(cfg):
 def test_full_excludes_nested_backup_dir(cfg):
     cfg.server.server_dir = "/opt/minecraft"
     cfg.backup.remote_dir = "/opt/minecraft/backups"
-    from mcctl.backup import full_backup_excludes
+    from lulism.backup import full_backup_excludes
     out = full_backup_excludes(cfg)
     assert out[-1] == "backups"
     assert "logs" in out  # configured excludes still present
@@ -310,5 +310,5 @@ def test_full_excludes_nested_backup_dir(cfg):
 def test_full_excludes_prefix_collision_is_not_nested(cfg):
     cfg.server.server_dir = "/opt/minecraft"
     cfg.backup.remote_dir = "/opt/minecraft-backups"  # shares prefix, NOT nested
-    from mcctl.backup import full_backup_excludes
+    from lulism.backup import full_backup_excludes
     assert "minecraft-backups" not in " ".join(full_backup_excludes(cfg))

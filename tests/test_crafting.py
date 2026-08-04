@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from mcctl import crafting
-from mcctl.config import Config
+from lulism import crafting
+from lulism.config import Config
 
 SHAPED_CHEST = {
     "type": "minecraft:crafting_shaped",

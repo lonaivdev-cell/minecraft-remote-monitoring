@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from mcctl.config import Config, ConfigError, write_template
+from lulism.config import Config, ConfigError, write_template
 
 
 def test_defaults_are_valid():

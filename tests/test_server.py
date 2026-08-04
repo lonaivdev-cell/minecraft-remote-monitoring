@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from mcctl import state
-from mcctl.config import Config
-from mcctl.server import ServerControl, ServerError
-from mcctl.transport import RunResult
+from lulism import state
+from lulism.config import Config
+from lulism.server import ServerControl, ServerError
+from lulism.transport import RunResult
 
 PROBE_OUT_UP = """\
 pid=4242
@@ -91,8 +91,8 @@ def test_start_requires_eula(cfg, fake_t):
 
 
 def test_start_happy_path_sets_intent(cfg, fake_t, clock, monkeypatch):
-    monkeypatch.setattr("mcctl.server.time", clock)
-    monkeypatch.setattr("mcctl.console.time", clock)
+    monkeypatch.setattr("lulism.server.time", clock)
+    monkeypatch.setattr("lulism.console.time", clock)
     log_path = f"{cfg.server.server_dir}/{cfg.server.log_file}"
     fake_t.files[log_path] = ""
     fake_t.expect(_pid_matcher, out="")
@@ -115,8 +115,8 @@ def test_start_happy_path_sets_intent(cfg, fake_t, clock, monkeypatch):
 
 
 def test_start_detects_dead_pane(cfg, fake_t, clock, monkeypatch):
-    monkeypatch.setattr("mcctl.server.time", clock)
-    monkeypatch.setattr("mcctl.console.time", clock)
+    monkeypatch.setattr("lulism.server.time", clock)
+    monkeypatch.setattr("lulism.console.time", clock)
     fake_t.files[f"{cfg.server.server_dir}/{cfg.server.log_file}"] = ""
     fake_t.expect(_pid_matcher, out="")
     fake_t.expect("grep -qs '^eula=true'", rc=0)
@@ -127,8 +127,8 @@ def test_start_detects_dead_pane(cfg, fake_t, clock, monkeypatch):
 
 
 def test_stop_graceful(cfg, fake_t, clock, monkeypatch):
-    monkeypatch.setattr("mcctl.server.time", clock)
-    monkeypatch.setattr("mcctl.console.time", clock)
+    monkeypatch.setattr("lulism.server.time", clock)
+    monkeypatch.setattr("lulism.console.time", clock)
     fake_t.files[f"{cfg.server.server_dir}/server.properties"] = "enable-rcon=false\n"
     fake_t.files[f"{cfg.server.server_dir}/{cfg.server.log_file}"] = "[12:00] boot\n"
     fake_t.expect(_pid_matcher, out="4242\n")
@@ -144,8 +144,8 @@ def test_stop_graceful(cfg, fake_t, clock, monkeypatch):
 
 
 def test_stop_escalates_to_term_then_kill(cfg, fake_t, clock, monkeypatch):
-    monkeypatch.setattr("mcctl.server.time", clock)
-    monkeypatch.setattr("mcctl.console.time", clock)
+    monkeypatch.setattr("lulism.server.time", clock)
+    monkeypatch.setattr("lulism.console.time", clock)
     fake_t.files[f"{cfg.server.server_dir}/server.properties"] = "enable-rcon=false\n"
     fake_t.files[f"{cfg.server.server_dir}/{cfg.server.log_file}"] = "x\n"
     fake_t.expect(_pid_matcher, out="4242\n")
@@ -197,7 +197,7 @@ def test_status_uses_config_session_when_no_discovery(cfg, fake_t):
 
 
 def test_adopt_running_reconciles_session_and_intent(cfg, fake_t):
-    from mcctl.server import Status
+    from lulism.server import Status
     state.set_desired("down")
     st = Status(running=True, pid=4242, tmux=True, tmux_session="mc-old")
     note = ServerControl(cfg, fake_t).adopt(st)
@@ -207,7 +207,7 @@ def test_adopt_running_reconciles_session_and_intent(cfg, fake_t):
 
 
 def test_adopt_noop_when_down(cfg, fake_t):
-    from mcctl.server import Status
+    from lulism.server import Status
     state.set_desired("down")
     note = ServerControl(cfg, fake_t).adopt(Status(running=False))
     assert note is None
@@ -215,7 +215,7 @@ def test_adopt_noop_when_down(cfg, fake_t):
 
 
 def test_adopt_only_intent_when_session_matches(cfg, fake_t):
-    from mcctl.server import Status
+    from lulism.server import Status
     state.set_desired("down")
     st = Status(running=True, pid=4242, tmux=True, tmux_session=cfg.server.tmux_session)
     note = ServerControl(cfg, fake_t).adopt(st)

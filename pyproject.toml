@@ -27,7 +27,7 @@ mcctl-gui = "mcctl.gui:main"
 where = ["src"]
 
 [tool.setuptools.dynamic]
-version = { attr = "mcctl.__version__" }
+version = { attr = "lulism.__version__" }
 
 [tool.setuptools.package-data]
 mcctl = ["units/*"]

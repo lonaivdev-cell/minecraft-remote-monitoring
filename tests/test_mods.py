@@ -4,8 +4,8 @@ import zipfile
 
 import pytest
 
-from mcctl import mods
-from mcctl.mods import ModInfo
+from lulism import mods
+from lulism.mods import ModInfo
 
 NEOFORGE_TOML = """\
 modLoader="javafml"

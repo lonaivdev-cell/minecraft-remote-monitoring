@@ -8,7 +8,7 @@ import threading
 
 import pytest
 
-from mcctl.rcon import AUTH, EXEC, RESPONSE, RconClient, RconError, pack_packet, unpack_packet
+from lulism.rcon import AUTH, EXEC, RESPONSE, RconClient, RconError, pack_packet, unpack_packet
 
 
 def test_pack_unpack_roundtrip():

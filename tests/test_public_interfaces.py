@@ -8,8 +8,8 @@ update the constant — revert whatever renamed the interface.
 
 from __future__ import annotations
 
-from mcctl import prometheus
-from mcctl.config import Config
+from lulism import prometheus
+from lulism.config import Config
 
 EXPECTED_METRICS = {
     "mcctl_up",

@@ -6,8 +6,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from mcctl.config import Config
-from mcctl.transport import SshTransport, make_transport
+from lulism.config import Config
+from lulism.transport import SshTransport, make_transport
 
 
 def _opts(cfg: Config) -> list[str]:
@@ -59,7 +59,7 @@ def test_extra_options_still_appended_after_key():
 def test_make_transport_local_vs_ssh():
     cfg = Config()
     cfg.server.transport = "local"
-    from mcctl.transport import LocalTransport
+    from lulism.transport import LocalTransport
     assert isinstance(make_transport(cfg), LocalTransport)
     cfg.server.transport = "ssh"
     assert isinstance(make_transport(cfg), SshTransport)
@@ -72,7 +72,7 @@ def test_make_transport_local_vs_ssh():
 def test_stream_stops_in_band_when_event_set():
     import threading
 
-    from mcctl.transport import LocalTransport
+    from lulism.transport import LocalTransport
     stop = threading.Event()
     seen: list[str] = []
 
@@ -94,7 +94,7 @@ def test_stream_watcher_terminates_blocked_read():
     import threading
     import time
 
-    from mcctl.transport import LocalTransport
+    from lulism.transport import LocalTransport
     stop = threading.Event()
     out: list[str] = []
 

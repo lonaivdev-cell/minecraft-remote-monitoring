@@ -2,7 +2,7 @@
 
 import pytest
 
-from mcctl import inspector
+from lulism import inspector
 
 
 def test_sections_registry_complete():
