@@ -1077,11 +1077,18 @@ Add before the `pipx install` at line 129:
 ```bash
 # 2.0.0: the pipx package itself was renamed. Removing the old one first stops
 # the two packages fighting over the `mcctl` binary the shim needs to install.
-if pipx list --short 2>/dev/null | grep -q '^mcctl '; then
+# Capture the match separately: `pipx list` exits 1 when ANY pipx venv has a
+# problem — unrelated to mcctl — and under `set -o pipefail` that non-zero
+# status propagates through the pipe even when grep matches, silently skipping
+# the uninstall on exactly the long-lived servers this script targets.
+mcctl_pipx=$(pipx list --short 2>/dev/null | grep '^mcctl ' || true)
+if [[ -n "$mcctl_pipx" ]]; then
   step "Removing the pre-2.0.0 pipx package"
   pipx uninstall mcctl && ok "old mcctl pipx package removed"
 fi
 ```
+
+Do **not** write this as `if pipx list --short | grep -q '^mcctl '; then` — that is the form with the `pipefail` bug described in the comment. It was verified failing against a live pipx install.
 
 Update line 103's preflight to `src/lulism/__init__.py`, line 128's step text, lines 70-77's `server_reach()` to call `lulism status`, and `health_panel()` (lines 80-91) to check `lulism-watchdog.service`, `lulism-autosave.timer`, `lulism-backup.timer`, `lulism-metrics.timer`. Change the restart block (lines 144-159) to `lulism-watchdog.service`, the doctor/status calls (lines 161-176) to `lulism`, and the banner text.
 
