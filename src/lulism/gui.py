@@ -14,6 +14,8 @@ PACMAN_HINT = "sudo pacman -S --needed gtk4 libadwaita python-gobject"
 
 
 def main(argv: list[str] | None = None) -> int:
+    from . import util
+    util.migrate_legacy_dirs()
     try:
         import gi
         gi.require_version("Gtk", "4.0")

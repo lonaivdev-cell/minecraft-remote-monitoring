@@ -49,6 +49,31 @@ def crashes_dir() -> Path:
     return state_dir() / "crashes"
 
 
+LEGACY_APP = "mcctl"
+
+
+def migrate_legacy_dirs() -> list[tuple[Path, Path]]:
+    """Copy pre-2.0.0 mcctl XDG dirs to their lulism equivalents, once.
+
+    Copies rather than moves so the mcctl trees remain a rollback path. Skips
+    any destination that already exists, which makes this idempotent and means
+    a hand-edited lulism config is never clobbered.
+    """
+    pairs = (
+        (_xdg("XDG_CONFIG_HOME", ".config") / LEGACY_APP, config_dir()),
+        (_xdg("XDG_STATE_HOME", ".local/state") / LEGACY_APP, state_dir()),
+        (_xdg("XDG_CACHE_HOME", ".cache") / LEGACY_APP, cache_dir()),
+    )
+    done: list[tuple[Path, Path]] = []
+    for src, dst in pairs:
+        if dst.exists() or not src.is_dir():
+            continue
+        shutil.copytree(src, dst)
+        log.info("migrated %s -> %s (the original is kept as a rollback path)", src, dst)
+        done.append((src, dst))
+    return done
+
+
 def metrics_path() -> Path:
     return state_dir() / "metrics.jsonl"
 

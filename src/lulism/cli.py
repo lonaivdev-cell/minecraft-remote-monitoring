@@ -1753,6 +1753,7 @@ def main(argv: list[str] | None = None) -> int:
     if not hasattr(args, "verbose"):
         args.verbose = 0
     util.setup_logging(args.verbose)
+    util.migrate_legacy_dirs()
     if not getattr(args, "func", None):
         parser.print_help()
         return 2
