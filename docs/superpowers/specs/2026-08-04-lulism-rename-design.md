@@ -136,6 +136,7 @@ breaks all of them.
 | `mcctl-android-v*.apk` in `release.yml:164` | Obtainium's release asset name |
 | `mcctl-debug-apk` in `android.yml:60` | CI artifact for the untouched Android build |
 | the 13 `mcctl_*` Prometheus metric names | §6.4 — a public interface; Grafana and alert rules query them by name |
+| `"mcctl_version"` in `agent.py`'s `agent.hello` response | a live wire-contract key: `android/core/…/Models.kt:225` deserializes it as `mcctlVersion` and two screens display it. Renaming it blanks the version on every installed phone, and the golden schema does not cover it |
 | historical incident references (`2026-06-11`, "mcctl postmortem") | they name what actually happened |
 
 ## 5. Commit sequence

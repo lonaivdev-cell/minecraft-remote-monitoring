@@ -16,7 +16,8 @@
 - **`AGENT_PROTOCOL` stays `1`.** `tests/golden/agent_schema_v1.json` must remain **byte-identical**. Never regenerate it during this plan — a diff there is a bug report, not a golden to refresh.
 - **The 13 `mcctl_*` Prometheus metric names must not change.** They are a public interface queried by Grafana panels and alert rules.
 - **`android/` must not be modified.** Not one file.
-- Preserve-list — these `mcctl` occurrences must survive verbatim: everything under `android/`; `provides`/`replaces`/`conflicts=('mcctl')` in PKGBUILD; the `mcctl` console-script name; the `~/.config/mcctl`, `~/.local/state/mcctl`, `~/.cache/mcctl` literals in the migrator; the `mcctl-*.service`/`.timer` literals in `doctor`; `mcctl-android-v*.apk` in `release.yml:164`; `mcctl-debug-apk` in `android.yml:60`; the 13 `mcctl_*` metric names; historical incident references (`2026-06-11`, "mcctl postmortem").
+- Preserve-list — these `mcctl` occurrences must survive verbatim: everything under `android/`; `provides`/`replaces`/`conflicts=('mcctl')` in PKGBUILD; the `mcctl` console-script name; the `~/.config/mcctl`, `~/.local/state/mcctl`, `~/.cache/mcctl` literals in the migrator; `util.LEGACY_APP` and the `mcctl-*.service`/`.timer` literals in `util.legacy_unit_names()` and `doctor`; the `(mcctl|lulism)` alternation in `doctor`'s watchdog pgrep patterns; **the `"mcctl_version"` response key in `agent.py`'s `agent.hello`**; `mcctl-android-v*.apk` in `release.yml:164`; `mcctl-debug-apk` in `android.yml:60`; the 13 `mcctl_*` metric names; historical incident references (`2026-06-11`, "mcctl postmortem").
+- **`"mcctl_version"` is a live wire-contract key, not prose.** `android/core/…/Models.kt:225` deserializes it as `mcctlVersion`, and `SettingsScreen.kt:102` / `ConnectScreen.kt:77` display it. Since `android/` is frozen, renaming the key would make every installed phone show a blank version. It is not covered by the golden schema (which contains zero `mcctl` strings), so Task 7 adds an explicit freeze test.
 - The shim's deprecation notice goes to **stderr only**. `mcctl agent` is NDJSON on stdout.
 - Migration **copies, never moves**, so the originals remain a rollback path.
 - Baseline is `399 passed, 1 skipped` in ~47s, ruff clean. Every task ends with that suite green.
@@ -1124,14 +1125,63 @@ Expected: `419 passed, 1 skipped`.
 
 ---
 
-### Task 7: Documentation sweep
+### Task 7: Source-string and documentation sweep
 
 **Files:**
+- Modify: `src/lulism/*.py` — every module EXCEPT the five allowlisted ones (see Step 0)
 - Modify: `README.md` (99 hits), `CLAUDE.md` (18), `TODO.md` (21)
+- Modify: `tests/test_public_interfaces.py` — add the `mcctl_version` freeze test
 
 **Interfaces:**
 - Consumes: the final command names, unit names and paths from Tasks 2–6.
 - Produces: no code interface.
+
+- [ ] **Step 0: Sweep the source prose first — Task 8's leak guard depends on it**
+
+At the end of Task 5 there were **120 `\bmcctl\b` occurrences across 26 modules** in `src/lulism/`. These are not merely cosmetic: many are user-facing output telling people to run the *deprecated* command, e.g. `cli.py`'s `rc.print("next: [bold]mcctl doctor[/bold] …")` and `Table(title="mcctl doctor")`. Task 8's leak-guard test fails until they are swept.
+
+Five modules are the allowlist and must **not** be swept — they hold preserve-list identifiers by design: `shim.py`, `util.py`, `doctor.py`, `prometheus.py`, `config.py`.
+
+```bash
+# Protect the wire-contract key and the thread/script names that are not prose.
+# \bmcctl\b already leaves mcctl_version alone ("_" is a word char), but be explicit.
+for f in src/lulism/*.py; do
+  case "$(basename "$f")" in shim.py|util.py|doctor.py|prometheus.py|config.py) continue;; esac
+  sed -i 's/\bmcctl-gui\b/lulism-gui/g; s/\bmcctl\b/lulism/g' "$f"
+done
+```
+
+Then read the whole diff before committing. `mcctl-gui` becomes `lulism-gui` (Task 6 renamed that script). Thread names like `mcctl-stream-cancel` and `mcctl-log-follow` become `lulism-*` — cosmetic but consistent. Confirm no `mcctl_version` was touched:
+
+```bash
+grep -rn 'mcctl_version\|lulism_version' src/lulism/agent.py
+```
+
+Expected: `agent.py` still returns `"mcctl_version"`, unchanged.
+
+- [ ] **Step 0a: Freeze `mcctl_version` so it can never be swept later**
+
+Append to `tests/test_public_interfaces.py`:
+
+```python
+def test_agent_hello_version_key_is_frozen():
+    """`mcctl_version` is a wire-contract key, not prose.
+
+    android/core/.../Models.kt:225 deserializes it as `mcctlVersion` and two
+    screens display it. android/ is frozen for this release, so renaming the key
+    would blank the version on every installed phone. The golden schema does not
+    cover it — agent.hello's payload is a response, not part of build_schema().
+    """
+    from lulism import agent
+
+    srv = agent.AgentServer.__new__(agent.AgentServer)
+    srv.caps = set()
+    hello = agent.METHODS["agent.hello"]["fn"](srv, {"capabilities": []})
+    assert "mcctl_version" in hello
+    assert "lulism_version" not in hello
+```
+
+If `METHODS`'s entry shape differs from `{"fn": ...}`, inspect `agent.py`'s `@method` decorator and adapt the call — the assertion is what matters, not the plumbing. If constructing an `AgentServer` proves awkward, asserting on the source text of `agent.py` is an acceptable fallback, but prefer exercising the real function.
 
 - [ ] **Step 1: Sweep the three documents**
 
