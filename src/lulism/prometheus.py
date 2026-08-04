@@ -66,7 +66,7 @@ def render(sample: dict, *, host: str = "", restarts: int = 0,
 
 
 def default_path() -> Path:
-    return util.state_dir() / "mcctl.prom"
+    return util.state_dir() / "lulism.prom"
 
 
 def export(cfg, *, out: str | Path | None = None) -> Path:

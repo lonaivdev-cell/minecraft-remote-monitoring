@@ -255,6 +255,26 @@ def _ops_checks(cfg: Config, t: BaseTransport, *, fix: bool) -> list[CheckResult
     else:
         out.append(_ok("ops: no legacy watchdog on server"))
 
+    # a pre-2.0.0 unit still enabled alongside its lulism replacement is the
+    # 2026-06-11 incident in miniature: two restart authorities.
+    stale = [u for u in util.legacy_unit_names()
+             if subprocess.run(["systemctl", "--user", "is-enabled", u],
+                               capture_output=True, text=True).stdout.strip() == "enabled"]
+    if stale:
+        out.append(_warn("ops: pre-2.0.0 units still enabled",
+                         ", ".join(stale),
+                         "two restart authorities — run `lulism watchdog install` to "
+                         "migrate, or: systemctl --user disable --now " + " ".join(stale)))
+    else:
+        out.append(_ok("ops: no pre-2.0.0 units enabled"))
+
+    legacy_prom = util._xdg("XDG_STATE_HOME", ".local/state") / "mcctl" / "mcctl.prom"
+    if legacy_prom.exists():
+        out.append(_warn("ops: stale Prometheus textfile",
+                         f"{legacy_prom} still present",
+                         "node_exporter's --collector.textfile.directory must now point at "
+                         f"{util.state_dir()} — metrics go stale with no error otherwise"))
+
     # a systemd unit that ALSO restarts the server while the watchdog is armed
     r = t.run("systemctl show minecraft.service "
               "-p LoadState,ActiveState,Restart 2>/dev/null || true", timeout=15)
@@ -320,7 +340,7 @@ def _ops_checks(cfg: Config, t: BaseTransport, *, fix: bool) -> list[CheckResult
                              "brains with separate desired/armed state will fight over restarts",
                              "keep one (the box, per DESIGN-BRAIN.md): on the other, run "
                              "`mcctl watchdog disarm` and `systemctl --user disable --now "
-                             "mcctl-watchdog.service`"))
+                             "lulism-watchdog.service`"))
         elif box_wd:
             out.append(_ok("ops: brain placement",
                            "watchdog runs on the box (target topology — DESIGN-BRAIN.md)"))
@@ -350,7 +370,7 @@ def _ops_checks(cfg: Config, t: BaseTransport, *, fix: bool) -> list[CheckResult
             out.append(_warn("ops: brain placement",
                              "no mcctl watchdog daemon running on this machine — "
                              "self-healing is off",
-                             "systemctl --user enable --now mcctl-watchdog.service, "
+                             "systemctl --user enable --now lulism-watchdog.service, "
                              "then `mcctl watchdog arm`"))
 
     return out
@@ -360,7 +380,7 @@ def _local_watchdog_active() -> bool:
     """Is an `mcctl watchdog run` daemon alive on THIS machine (unit or loose process)?"""
     try:
         r = subprocess.run(["systemctl", "--user", "is-active", "--quiet",
-                            "mcctl-watchdog.service"], timeout=5, capture_output=True)
+                            "lulism-watchdog.service"], timeout=5, capture_output=True)
         if r.returncode == 0:
             return True
     except (OSError, subprocess.TimeoutExpired):

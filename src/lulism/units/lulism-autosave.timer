@@ -1,5 +1,5 @@
 [Unit]
-Description=mcctl autosave every 20 minutes
+Description=lulism autosave every 20 minutes
 
 [Timer]
 OnCalendar=*:0/20

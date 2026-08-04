@@ -95,7 +95,7 @@ def setup_logging(verbosity: int = 0) -> None:
     root.setLevel(logging.DEBUG)
 
     fh = logging.handlers.RotatingFileHandler(
-        state_dir() / "mcctl.log", maxBytes=1_000_000, backupCount=5, encoding="utf-8"
+        state_dir() / "lulism.log", maxBytes=1_000_000, backupCount=5, encoding="utf-8"
     )
     fh.setLevel(logging.DEBUG)
     fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s"))
@@ -279,19 +279,62 @@ def user_unit_dir() -> Path:
     return _xdg("XDG_CONFIG_HOME", ".config") / "systemd" / "user"
 
 
-def render_units(*, exe: str = "mcctl") -> dict[str, str]:
+def render_units(*, exe: str = "lulism") -> dict[str, str]:
     """The unit files shipped in lulism/units/ (the PKGBUILD installs the same
-    files verbatim), with ExecStart rewritten for non-/usr/bin installs (pipx)."""
+    files verbatim), with ExecStart rewritten for non-/usr/bin installs (pipx).
+
+    An `exe` naming the deprecated `mcctl` shim is never honoured, even if a
+    caller passes one explicitly: a systemd unit is long-lived and must not
+    hardcode a permanent dependency on a shim that is removed at 3.0.0."""
     from importlib import resources
+    if exe.endswith("mcctl"):
+        exe = "lulism"
     units: dict[str, str] = {}
     for entry in (resources.files("lulism") / "units").iterdir():
         if not entry.name.endswith((".service", ".timer")):
             continue
         text = entry.read_text(encoding="utf-8")
-        if exe != "/usr/bin/mcctl":
-            text = text.replace("ExecStart=/usr/bin/mcctl ", f"ExecStart={exe} ")
+        if exe != "/usr/bin/lulism":
+            text = text.replace("ExecStart=/usr/bin/lulism ", f"ExecStart={exe} ")
         units[entry.name] = text
     return units
+
+
+def legacy_unit_names() -> tuple[str, ...]:
+    """The pre-2.0.0 unit names. All seven, not just the three the CLI hints at
+    enabling — an operator may have enabled lulism-metrics.timer's predecessor
+    by hand, and that is the one most often forgotten."""
+    return (
+        "mcctl-watchdog.service",
+        "mcctl-autosave.service", "mcctl-autosave.timer",
+        "mcctl-backup.service", "mcctl-backup.timer",
+        "mcctl-metrics.service", "mcctl-metrics.timer",
+    )
+
+
+def migrate_units(run=None) -> list[str]:
+    """Stop, disable and remove the pre-2.0.0 units, then daemon-reload.
+
+    Ordering is the safety property: a box with both mcctl-watchdog.service and
+    lulism-watchdog.service enabled has two restart authorities, which is the
+    2026-06-11 outage. Every old unit is stopped and disabled before any new one
+    is installed. `run` is injected so the ordering is testable without systemd.
+    """
+    if run is None:
+        def run(cmd: list[str]) -> int:
+            return subprocess.run(cmd, capture_output=True).returncode
+
+    names = legacy_unit_names()
+    for unit in names:
+        run(["systemctl", "--user", "stop", unit])
+    for unit in names:
+        run(["systemctl", "--user", "disable", unit])
+    unit_dir = user_unit_dir()
+    for unit in names:
+        (unit_dir / unit).unlink(missing_ok=True)
+    run(["systemctl", "--user", "daemon-reload"])
+    log.info("migrated %d pre-2.0.0 systemd units", len(names))
+    return list(names)
 
 
 # ---------------------------------------------------------------- misc

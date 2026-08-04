@@ -636,7 +636,9 @@ def cmd_watchdog(ctx: Ctx) -> int:
 def _install_units() -> int:
     """Install the systemd user units shipped inside the package (single source
     shared with the PKGBUILD), rewriting ExecStart for non-/usr/bin installs."""
-    units = util.render_units(exe=sys.argv[0] if sys.argv[0].endswith("mcctl") else "mcctl")
+    units = util.render_units(exe=sys.argv[0] if sys.argv[0].endswith("lulism") else "lulism")
+    for unit in util.migrate_units():
+        rc.print(f"[yellow]removed legacy unit[/yellow] {unit}")
     unit_dir = util.user_unit_dir()
     unit_dir.mkdir(parents=True, exist_ok=True)
     for name, content in units.items():
@@ -644,7 +646,7 @@ def _install_units() -> int:
         rc.print(f"[green]wrote[/green] {unit_dir / name}")
     rc.print("\nenable with (fish):")
     rc.print("  systemctl --user daemon-reload")
-    rc.print("  systemctl --user enable --now mcctl-watchdog.service mcctl-backup.timer mcctl-autosave.timer")
+    rc.print("  systemctl --user enable --now lulism-watchdog.service lulism-backup.timer lulism-autosave.timer")
     return 0
 
 

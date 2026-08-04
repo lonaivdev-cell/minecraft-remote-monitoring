@@ -1,5 +1,5 @@
 [Unit]
-Description=mcctl Prometheus textfile refresh (every minute)
+Description=lulism Prometheus textfile refresh (every minute)
 
 [Timer]
 OnBootSec=1m

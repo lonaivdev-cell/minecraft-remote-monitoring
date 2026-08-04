@@ -1,0 +1,6 @@
+[Unit]
+Description=lulism Prometheus textfile exporter (refresh the .prom from metric history)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/lulism metrics export

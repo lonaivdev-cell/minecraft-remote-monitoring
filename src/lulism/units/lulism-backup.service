@@ -1,0 +1,6 @@
+[Unit]
+Description=lulism world backup + rotation
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/lulism backup create --notify

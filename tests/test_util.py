@@ -79,25 +79,25 @@ def test_json_state_roundtrip(tmp_path):
 def test_render_units_ships_all_units():
     from lulism import util
     units = util.render_units()
-    assert set(units) == {"mcctl-watchdog.service", "mcctl-autosave.service",
-                          "mcctl-autosave.timer", "mcctl-backup.service",
-                          "mcctl-backup.timer", "mcctl-metrics.service",
-                          "mcctl-metrics.timer"}
+    assert set(units) == {"lulism-watchdog.service", "lulism-autosave.service",
+                          "lulism-autosave.timer", "lulism-backup.service",
+                          "lulism-backup.timer", "lulism-metrics.service",
+                          "lulism-metrics.timer"}
 
 
 def test_render_units_rewrites_execstart_for_pipx():
     from lulism import util
-    units = util.render_units(exe="/home/u/.local/bin/mcctl")
-    assert "ExecStart=/home/u/.local/bin/mcctl watchdog run" in units["mcctl-watchdog.service"]
-    assert "/usr/bin/mcctl" not in units["mcctl-watchdog.service"]
+    units = util.render_units(exe="/home/u/.local/bin/lulism")
+    assert "ExecStart=/home/u/.local/bin/lulism watchdog run" in units["lulism-watchdog.service"]
+    assert "/usr/bin/lulism" not in units["lulism-watchdog.service"]
     # timers carry no ExecStart and must come through untouched
-    assert "OnCalendar=*-*-* 04:30:00" in units["mcctl-backup.timer"]
+    assert "OnCalendar=*-*-* 04:30:00" in units["lulism-backup.timer"]
 
 
 def test_render_units_keeps_usrbin_for_system_install():
     from lulism import util
-    units = util.render_units(exe="/usr/bin/mcctl")
-    assert "ExecStart=/usr/bin/mcctl save --skip-if-down" in units["mcctl-autosave.service"]
+    units = util.render_units(exe="/usr/bin/lulism")
+    assert "ExecStart=/usr/bin/lulism save --skip-if-down" in units["lulism-autosave.service"]
 
 
 def test_user_unit_dir_respects_xdg(isolated_xdg):

@@ -1,6 +1,0 @@
-[Unit]
-Description=mcctl Prometheus textfile exporter (refresh the .prom from metric history)
-
-[Service]
-Type=oneshot
-ExecStart=/usr/bin/mcctl metrics export

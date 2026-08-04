@@ -1,10 +1,10 @@
 [Unit]
-Description=mcctl self-healing watchdog for the remote Minecraft server
+Description=lulism self-healing watchdog for the remote Minecraft server
 Documentation=https://github.com/lonaivdev-cell/minecraft-remote-monitoring
 After=network-online.target
 
 [Service]
-ExecStart=/usr/bin/mcctl watchdog run
+ExecStart=/usr/bin/lulism watchdog run
 Restart=on-failure
 RestartSec=10
 

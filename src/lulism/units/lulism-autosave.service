@@ -1,0 +1,6 @@
+[Unit]
+Description=lulism autosave trigger (save-all flush)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/lulism save --skip-if-down
