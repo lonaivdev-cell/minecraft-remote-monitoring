@@ -161,10 +161,38 @@ def test_transport_error_exit_code(tmp_path, monkeypatch, capsys, fake_t):
     assert cli.main(["save", "--config", str(cfgfile)]) == 3
 
 
-def test_watchdog_install_writes_units_to_xdg(isolated_xdg, capsys):
+def test_watchdog_install_writes_units_to_xdg(isolated_xdg, capsys, monkeypatch):
+    """_install_units() calls util.migrate_units(), whose default `run` shells
+    out to the real `systemctl --user` (isolated_xdg only overrides XDG_*, not
+    DBUS_SESSION_BUS_ADDRESS). On a box that actually has old mcctl-* units
+    enabled, letting that reach the live bus from a test run would stop and
+    disable the real watchdog -- so inject a FakeSystemctl, the same way
+    test_units_migration.py does, and prove every call landed on the fake."""
     from lulism import util
     from lulism.cli import _install_units
+
+    class FakeSystemctl:
+        def __init__(self):
+            self.calls: list[list[str]] = []
+
+        def __call__(self, cmd: list[str]) -> int:
+            self.calls.append(list(cmd))
+            return 0
+
+    fake = FakeSystemctl()
+    real_migrate_units = util.migrate_units
+    monkeypatch.setattr(util, "migrate_units", lambda run=None: real_migrate_units(fake))
+
     assert _install_units() == 0
+
+    # migrate_units() really ran its full stop/disable/reload sequence for all
+    # 7 legacy units, but every systemctl invocation landed on the fake --
+    # never on subprocess, never on the real user bus.
+    assert len(fake.calls) == 7 + 7 + 1  # stop*7, disable*7, daemon-reload
+    assert all(c[:2] == ["systemctl", "--user"] for c in fake.calls)
+    touched = {c[-1] for c in fake.calls if c[-1].endswith((".service", ".timer"))}
+    assert touched == set(util.legacy_unit_names())
+
     written = sorted(p.name for p in util.user_unit_dir().iterdir())
     assert "lulism-watchdog.service" in written and len(written) == 7
     text = (util.user_unit_dir() / "lulism-backup.service").read_text()

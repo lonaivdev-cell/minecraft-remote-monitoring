@@ -257,9 +257,7 @@ def _ops_checks(cfg: Config, t: BaseTransport, *, fix: bool) -> list[CheckResult
 
     # a pre-2.0.0 unit still enabled alongside its lulism replacement is the
     # 2026-06-11 incident in miniature: two restart authorities.
-    stale = [u for u in util.legacy_unit_names()
-             if subprocess.run(["systemctl", "--user", "is-enabled", u],
-                               capture_output=True, text=True).stdout.strip() == "enabled"]
+    stale = [u for u in util.legacy_unit_names() if _unit_is_enabled(u)]
     if stale:
         out.append(_warn("ops: pre-2.0.0 units still enabled",
                          ", ".join(stale),
@@ -374,6 +372,19 @@ def _ops_checks(cfg: Config, t: BaseTransport, *, fix: bool) -> list[CheckResult
                              "then `mcctl watchdog arm`"))
 
     return out
+
+
+def _unit_is_enabled(unit: str) -> bool:
+    """True if `systemctl --user is-enabled` reports enabled/enabled-runtime/
+    linked/linked-runtime — all states a hand-enabled unit can be in (the case
+    legacy_unit_names()'s docstring calls out). A missing systemctl or a hung
+    D-Bus session is "not enabled", not a crash."""
+    try:
+        r = subprocess.run(["systemctl", "--user", "is-enabled", unit],
+                           timeout=5, capture_output=True, text=True)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return r.stdout.strip().startswith(("enabled", "linked"))
 
 
 def _local_watchdog_active() -> bool:

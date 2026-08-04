@@ -285,9 +285,13 @@ def render_units(*, exe: str = "lulism") -> dict[str, str]:
 
     An `exe` naming the deprecated `mcctl` shim is never honoured, even if a
     caller passes one explicitly: a systemd unit is long-lived and must not
-    hardcode a permanent dependency on a shim that is removed at 3.0.0."""
+    hardcode a permanent dependency on a shim that is removed at 3.0.0. The
+    clamp matches the exact basename ("mcctl"), not a suffix, so an unrelated
+    install path that merely ends in those letters (e.g. a fork's
+    /opt/foomcctl/bin/foomcctl) keeps its own exe untouched."""
     from importlib import resources
-    if exe.endswith("mcctl"):
+    if Path(exe).name == "mcctl":
+        log.debug("render_units: exe %r names the deprecated mcctl shim, using lulism instead", exe)
         exe = "lulism"
     units: dict[str, str] = {}
     for entry in (resources.files("lulism") / "units").iterdir():
@@ -322,7 +326,11 @@ def migrate_units(run=None) -> list[str]:
     """
     if run is None:
         def run(cmd: list[str]) -> int:
-            return subprocess.run(cmd, capture_output=True).returncode
+            try:
+                return subprocess.run(cmd, capture_output=True, timeout=5).returncode
+            except (OSError, subprocess.TimeoutExpired) as e:
+                log.warning("migrate_units: %s failed: %s", " ".join(cmd), e)
+                return 1
 
     names = legacy_unit_names()
     for unit in names:
