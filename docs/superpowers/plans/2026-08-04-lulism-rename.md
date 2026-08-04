@@ -1289,27 +1289,40 @@ from pathlib import Path
 
 import lulism
 
-# Every module allowed to say "mcctl", and why. Anything else is a missed rename.
-LEAK_ALLOWLIST = {
+# Modules where every `mcctl` mention is a preserve-list identifier by design.
+LEAK_ALLOWLIST_MODULES = {
     "shim.py",        # the deprecated entry point — it *is* the mcctl command
     "util.py",        # LEGACY_APP + legacy_unit_names(): the migrator must know the old names
-    "doctor.py",      # legacy unit detection + the 2026-06-11 incident notes
+    "doctor.py",      # legacy unit detection, the (mcctl|lulism) pgrep, 2026-06-11 notes
     "prometheus.py",  # the 13 frozen mcctl_* metric names
     "config.py",      # prom_path comment referencing the legacy default
+}
+
+# Individual lines elsewhere that must keep the old name. Allowlisting the exact
+# text rather than the whole module keeps the guard live for everything else in
+# these files.
+LEAK_ALLOWLIST_LINES = {
+    ".mcctl/vanilla",  # assets.py: a cache path on the REMOTE server. migrate_legacy_dirs()
+                       # only moves local XDG dirs, so renaming this orphans every server's
+                       # cached vanilla jar with no migration path.
+    "an older mcctl",  # server.py: a historical reference; "an older lulism" would be false.
 }
 
 
 def test_no_stray_mcctl_identifiers_survive():
     pkg = Path(lulism.__file__).parent
-    # \bmcctl\b does not match mcctl_tps ("_" is a word char, so no boundary),
-    # which is why the frozen metric names do not trip this. It DOES match
-    # mcctl-watchdog.service — those live in allowlisted modules by design.
+    # \bmcctl\b does not match mcctl_tps or mcctl_version ("_" is a word char, so
+    # no boundary), which is why the frozen metric names and the agent.hello wire
+    # key do not trip this. It DOES match mcctl-watchdog.service — those live in
+    # allowlisted modules by design.
     pattern = re.compile(r"\bmcctl\b")
     leaks = {}
     for py in sorted(pkg.rglob("*.py")):
-        if py.name in LEAK_ALLOWLIST:
+        if py.name in LEAK_ALLOWLIST_MODULES:
             continue
-        hits = [ln for ln in py.read_text(encoding="utf-8").splitlines() if pattern.search(ln)]
+        hits = [ln.strip() for ln in py.read_text(encoding="utf-8").splitlines()
+                if pattern.search(ln)
+                and not any(ok in ln for ok in LEAK_ALLOWLIST_LINES)]
         if hits:
             leaks[py.name] = hits
     assert leaks == {}, f"stray mcctl identifiers: {leaks}"
@@ -1335,7 +1348,7 @@ git diff --stat HEAD~7 -- tests/golden/agent_schema_v1.json
 git status --short android/
 ```
 
-Expected: `421 passed, 1 skipped`; ruff clean; **the golden schema diff is empty**; **`android/` is empty**. Those last two are the proof obligations from the spec — if either shows output, stop and investigate before committing.
+Expected: `425 passed, 1 skipped`; ruff clean; **the golden schema diff is empty**; **`android/` is empty**. Those last two are the proof obligations from the spec — if either shows output, stop and investigate before committing.
 
 - [ ] **Step 5: Commit**
 
@@ -1358,10 +1371,10 @@ must be repointed at ~/.local/state/lulism."
 
 Run before opening the PR:
 
-- [ ] `.venv/bin/python -m pytest` → `421 passed, 1 skipped`
+- [ ] `.venv/bin/python -m pytest` → `425 passed, 1 skipped`
 - [ ] `.venv/bin/ruff check src tests` → clean
 - [ ] `git diff --stat main -- tests/golden/agent_schema_v1.json` → empty
 - [ ] `git diff --stat main -- android/` → empty
 - [ ] `.venv/bin/lulism --version` → `2.0.0`
 - [ ] `.venv/bin/mcctl agent --schema | .venv/bin/python -m json.tool > /dev/null` → exit 0
-- [ ] `.venv/bin/python -m pytest tests/test_public_interfaces.py` → 4 passed, constants and allowlist unedited
+- [ ] `.venv/bin/python -m pytest tests/test_public_interfaces.py` → 5 passed, constants and allowlists unedited
