@@ -948,6 +948,17 @@ Replace the seven unit install lines, the completion line and the desktop/icon l
 
 Also update the `optdepends` strings that say `mcctl-gui` and `mcctl ai` to `lulism-gui` and `lulism ai`.
 
+- [ ] **Step 5a: Rename the makepkg artifact pattern in `.gitignore`**
+
+`.gitignore:17` ignores `src/mcctl-*/`, a makepkg build artifact path. `makepkg` will now produce `src/lulism-*/`, so without this the build tree gets committed:
+
+```bash
+sed -i 's|^src/mcctl-\*/$|src/lulism-*/|' .gitignore
+grep -n 'lulism' .gitignore
+```
+
+Expected: the `src/lulism-*/` line, and no remaining `src/mcctl-*/`.
+
 - [ ] **Step 6: Verify every PKGBUILD source path exists**
 
 ```bash
@@ -1033,11 +1044,29 @@ Expected: `416 passed, 1 skipped`.
 
 - [ ] **Step 1: Sweep the three documents**
 
-```bash
-sed -i 's/\bmcctl-gui\b/lulism-gui/g; s/\bmcctl\b/lulism/g; s|src/mcctl/|src/lulism/|g; s|~/.config/mcctl|~/.config/lulism|g; s|~/.local/state/mcctl|~/.local/state/lulism|g' README.md CLAUDE.md TODO.md
-```
+**`\bmcctl\b` matches more than it looks like it does.** Verified behaviour:
 
-Note `\bmcctl\b` does not match `mcctl_tps` or `mcctl-watchdog.service` (underscore and hyphen are word characters in neither position — verify in the next step rather than assuming).
+| Input | `\bmcctl\b` matches? | |
+|---|---|---|
+| `mcctl_load1` | **no** | `_` is a word char, so there is no boundary — metric names are safe |
+| `mcctl-watchdog.service` | **yes** | `-` is not a word char, so there *is* a boundary — and this rename is wanted |
+| `mcctl-android-v2.0.0.apk` | **yes** | same boundary — and this rename is **forbidden** (preserve-list) |
+
+So the Obtainium asset name must be protected across the sweep with a sentinel:
+
+```bash
+# 1. Protect the preserve-list strings that \bmcctl\b would otherwise eat.
+sed -i 's/mcctl-android/@@KEEP_ANDROID@@/g; s/mcctl-debug-apk/@@KEEP_DEBUG@@/g' README.md CLAUDE.md TODO.md
+
+# 2. Sweep.
+sed -i 's/\bmcctl-gui\b/lulism-gui/g; s/\bmcctl\b/lulism/g; s|src/mcctl/|src/lulism/|g; s|~/.config/mcctl|~/.config/lulism|g; s|~/.local/state/mcctl|~/.local/state/lulism|g' README.md CLAUDE.md TODO.md
+
+# 3. Restore.
+sed -i 's/@@KEEP_ANDROID@@/mcctl-android/g; s/@@KEEP_DEBUG@@/mcctl-debug-apk/g' README.md CLAUDE.md TODO.md
+
+# 4. No sentinel may survive.
+grep -n '@@KEEP' README.md CLAUDE.md TODO.md && echo "SENTINEL LEAKED — fix before committing" || echo "clean"
+```
 
 - [ ] **Step 2: Restore the preserve-list occurrences**
 
@@ -1124,8 +1153,9 @@ LEAK_ALLOWLIST = {
 
 def test_no_stray_mcctl_identifiers_survive():
     pkg = Path(lulism.__file__).parent
-    # \bmcctl\b deliberately does not match mcctl_tps or mcctl-watchdog.service:
-    # those are frozen interfaces, not identifiers.
+    # \bmcctl\b does not match mcctl_tps ("_" is a word char, so no boundary),
+    # which is why the frozen metric names do not trip this. It DOES match
+    # mcctl-watchdog.service — those live in allowlisted modules by design.
     pattern = re.compile(r"\bmcctl\b")
     leaks = {}
     for py in sorted(pkg.rglob("*.py")):

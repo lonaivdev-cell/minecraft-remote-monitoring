@@ -18,6 +18,9 @@ src/mcctl-*/
 *.pkg.tar.zst
 *.log.makepkg
 
+# Agent scratch (subagent-driven-development workspaces)
+.superpowers/
+
 # Editor / OS
 .idea/
 .vscode/
