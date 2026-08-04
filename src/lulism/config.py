@@ -1,4 +1,4 @@
-"""Configuration: TOML at ~/.config/mcctl/config.toml, defaults = CarborioLand stack."""
+"""Configuration: TOML at ~/.config/lulism/config.toml, defaults = CarborioLand stack."""
 
 from __future__ import annotations
 
@@ -90,7 +90,9 @@ class WatchdogCfg:
 class MetricsCfg:
     # Prometheus textfile exporter target; point node_exporter's
     # --collector.textfile.directory at the directory holding this file.
-    prom_path: str = ""                                   # "" => $XDG_STATE_HOME/mcctl/mcctl.prom
+    # Pre-2.0.0 the default was $XDG_STATE_HOME/mcctl/mcctl.prom — node_exporter
+    # must be repointed after upgrading or the metrics go stale with no error.
+    prom_path: str = ""                                   # "" => $XDG_STATE_HOME/lulism/lulism.prom
 
 
 @dataclass(slots=True)
@@ -99,14 +101,14 @@ class LlmCfg:
     model: str = "claude-opus-4-8"                        # Anthropic model id
     api_key_env: str = "ANTHROPIC_API_KEY"                # env var holding the key (never stored)
     max_tokens: int = 8000                                # per-answer output budget
-    log_lines: int = 400                                  # log tail size sent with `mcctl ai logs`
+    log_lines: int = 400                                  # log tail size sent with `lulism ai logs`
     ollama_url: str = "http://localhost:11434"            # local ollama server (provider = "ollama")
     ollama_model: str = "llama3.1"                        # model name as `ollama pull`ed it
 
 
 @dataclass(slots=True)
 class CraftingCfg:
-    # Recipe browser + survival "command-craft" (`mcctl craft`, agent craft.* methods).
+    # Recipe browser + survival "command-craft" (`lulism craft`, agent craft.* methods).
     player: str = "GLEYSSON"                # default crafted-output receiver (your IGN)
     source_player: str = ""                 # whose inventory supplies materials ("" = player)
     max_output_stack: int = 64              # hold-to-craft-max cap: one output stack
@@ -144,7 +146,7 @@ class Config:
         p = Path(path) if path else cls.default_path()
         cfg = cls(path=p)
         if not p.exists():
-            log.info("no config at %s — using built-in defaults (run `mcctl init`)", p)
+            log.info("no config at %s — using built-in defaults (run `lulism init`)", p)
             cfg.validate()
             return cfg
         try:
@@ -255,8 +257,8 @@ class Config:
         sections = (("server", self.server), ("backup", self.backup),
                     ("watchdog", self.watchdog), ("metrics", self.metrics),
                     ("llm", self.llm), ("ui", self.ui), ("crafting", self.crafting))
-        lines = ["# mcctl configuration — Minecraft remote control & monitoring",
-                 "# Managed by `mcctl init` and the GUI Settings tab; hand-editing is fine too.",
+        lines = ["# lulism configuration — Minecraft remote control & monitoring",
+                 "# Managed by `lulism init` and the GUI Settings tab; hand-editing is fine too.",
                  ""]
         for name, dc in sections:
             if name in _SECTION_DOC:
@@ -286,7 +288,7 @@ _SECTION_DOC = {
     "metrics": "Prometheus textfile exporter (node_exporter/Grafana).",
     "llm": "AI analysis & chat — provider='anthropic' (Claude) or 'ollama' (local).",
     "ui": "Display preferences (log timestamp timezones).",
-    "crafting": "Recipe browser + survival command-craft (`mcctl craft`, phone craft.* methods).",
+    "crafting": "Recipe browser + survival command-craft (`lulism craft`, phone craft.* methods).",
 }
 
 _KEY_DOC = {
@@ -294,10 +296,10 @@ _KEY_DOC = {
     "ssh_options": 'Extra raw ssh args, e.g. ["-o", "IdentityFile=~/.ssh/carborio"].',
     "transport": '"ssh" for the real server, "local" for dev/testing on this machine.',
     "start_command": "ServerPackCreator entry point (ServerStarterJar), NOT run.sh.",
-    "mc_version": 'Minecraft version (e.g. "1.21.1"); empty auto-detects. Drives `mcctl assets sync`.',
+    "mc_version": 'Minecraft version (e.g. "1.21.1"); empty auto-detects. Drives `lulism assets sync`.',
     "stop_countdown": "In-game warning countdown (seconds) before a graceful stop.",
     "provider": '"anthropic" (Claude API, needs the anthropic package + API key) or "ollama" (local).',
-    "api_key_env": "Env var holding the API key — mcctl never stores the key itself.",
+    "api_key_env": "Env var holding the API key — lulism never stores the key itself.",
     "ollama_model": "Model name as `ollama pull`ed it (pick from `ollama list`).",
     "ntfy_topic": "ntfy push topic (also a UnifiedPush distributor); empty disables push.",
     "timezone": 'Display zone for log timestamps (IANA name, or "" to show raw server time).',
@@ -311,7 +313,7 @@ _KEY_DOC = {
 # ---------------------------------------------------------------- template
 
 TEMPLATE = """\
-# mcctl configuration — Minecraft remote control & monitoring
+# lulism configuration — Minecraft remote control & monitoring
 # Defaults target the CarborioLand stack (MMC5 / NeoForge 1.21.1 on an ARM64 OCI box).
 # Every key shown here is optional; missing keys fall back to these defaults.
 
@@ -333,7 +335,7 @@ start_command = "bash start.sh"
 log_file = "logs/latest.log"
 world_dir = "world"
 # Minecraft version, e.g. "1.21.1". Leave empty to auto-detect from the server
-# (logs/libraries). Used by `mcctl assets sync` to fetch the matching vanilla
+# (logs/libraries). Used by `lulism assets sync` to fetch the matching vanilla
 # client jar so vanilla items get icons + names in the recipe browser.
 mc_version = ""
 mc_port = 25565
@@ -356,16 +358,16 @@ keep_daily = 7
 keep_weekly = 4
 # Refuse to create a backup if the backup filesystem has less free space than this.
 min_free_gb = 5.0
-# Optional local mirror; `mcctl backup pull` rsyncs archives here.
+# Optional local mirror; `lulism backup pull` rsyncs archives here.
 local_dir = ""
-# Paths excluded from `mcctl backup --full` (relative to server_dir).
+# Paths excluded from `lulism backup --full` (relative to server_dir).
 full_excludes = ["logs", "crash-reports", ".cache", "libraries/.cache"]
 # Off-site mirror via rclone (e.g. OCI Object Storage). Empty disables it.
 # Configure the remote first with `rclone config` on the server (creates "oci", …).
 offsite_remote = ""                                       # e.g. "oci:carborioland-backups/world"
 # "copy" never deletes off-site (archives accumulate); "sync" mirrors the pruned local set.
 offsite_mode = "copy"
-# Push to the off-site remote automatically after `mcctl backup create` rotates.
+# Push to the off-site remote automatically after `lulism backup create` rotates.
 offsite_after_prune = false
 
 [watchdog]
@@ -378,7 +380,7 @@ restart_window = 3600
 backoff_base = 20
 tps_alert = 15.0
 heap_alert_pct = 92
-# Built-in autosave (minutes, 0 = disabled — prefer the mcctl-autosave systemd timer).
+# Built-in autosave (minutes, 0 = disabled — prefer the lulism-autosave systemd timer).
 autosave_minutes = 0
 # Automatically run a 60s spark profiler when TPS stays below tps_alert.
 auto_profile_on_lag = false
@@ -394,24 +396,26 @@ ntfy_topic = ""
 ntfy_token = ""
 
 [metrics]
-# Prometheus textfile exporter (`mcctl metrics export`, mcctl-metrics.timer).
+# Prometheus textfile exporter (`lulism metrics export`, lulism-metrics.timer).
 # Point node_exporter --collector.textfile.directory at this file's directory.
-# Empty => $XDG_STATE_HOME/mcctl/mcctl.prom.
+# Empty => $XDG_STATE_HOME/lulism/lulism.prom.
+# Pre-2.0.0 that default was $XDG_STATE_HOME/mcctl/mcctl.prom — repoint
+# node_exporter after upgrading, or metrics go stale with no error surfaced.
 prom_path = ""
 
 [llm]
-# AI log/crash/mod analysis & chat (`mcctl ai …`, GUI "AI"/"Chat" pages).
+# AI log/crash/mod analysis & chat (`lulism ai …`, GUI "AI"/"Chat" pages).
 # provider = "anthropic" -> Claude API (needs the optional `anthropic` package
-#                           and an API key in the environment; mcctl stores no keys).
+#                           and an API key in the environment; lulism stores no keys).
 # provider = "ollama"    -> a local LLM served by ollama (no API key, no data leaves
-#                           the box). Nothing extra to install — mcctl talks HTTP.
+#                           the box). Nothing extra to install — lulism talks HTTP.
 provider = "anthropic"
 # Anthropic model id (provider = "anthropic").
 model = "claude-opus-4-8"
 api_key_env = "ANTHROPIC_API_KEY"
 # Output budget per answer (input is whatever context fits the analysis).
 max_tokens = 8000
-# How many latest.log lines `mcctl ai logs` sends as context.
+# How many latest.log lines `lulism ai logs` sends as context.
 log_lines = 400
 # Local ollama server + model (provider = "ollama"). Run `ollama pull <model>` first.
 ollama_url = "http://localhost:11434"
@@ -425,8 +429,8 @@ timezone = "America/Sao_Paulo"
 server_timezone = "UTC"
 
 [crafting]
-# Recipe browser + survival "command-craft" (`mcctl craft`, the phone's craft.* RPCs).
-# mcctl can't reach your client's crafting grid, so instead it reproduces the outcome:
+# Recipe browser + survival "command-craft" (`lulism craft`, the phone's craft.* RPCs).
+# lulism can't reach your client's crafting grid, so instead it reproduces the outcome:
 # it reads your inventory, consumes the inputs with /clear, and grants the output with
 # /give — only ever from loose (accessible) inventory, so it stays survival-honest.
 # player    = your in-game name; the default receiver of the crafted output.

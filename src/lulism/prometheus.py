@@ -72,7 +72,7 @@ def default_path() -> Path:
 def export(cfg, *, out: str | Path | None = None) -> Path:
     """Write the latest recorded sample to a .prom file, atomically.
 
-    Reads the newest line of metrics.jsonl (the same history `mcctl watch`,
+    Reads the newest line of metrics.jsonl (the same history `lulism watch`,
     the dashboard and the watchdog all feed) — no extra round-trip to the
     server. Emits mcctl_up=0 with a fresh scrape timestamp when there is no
     sample yet, so Grafana can tell "exporter alive, server down" from

@@ -1,7 +1,9 @@
+import re
 from pathlib import Path
 
 import pytest
 
+from lulism import prometheus, util
 from lulism.config import Config, ConfigError, write_template
 
 
@@ -19,6 +21,33 @@ def test_template_roundtrip(tmp_path: Path):
     cfg = Config.load(p)
     # the template must agree with the dataclass defaults — keep them in sync
     assert cfg.to_dict() == Config().to_dict()
+
+
+def test_generated_config_documents_the_real_paths_and_units(tmp_path: Path, isolated_xdg):
+    """The template is written verbatim into every user's config.toml by
+    `lulism init`, so a stale path or unit name in it is not a comment — it is
+    documentation the operator will act on. It shipped claiming the prom file
+    defaults to $XDG_STATE_HOME/mcctl/mcctl.prom (prometheus.py writes
+    lulism/lulism.prom) and naming mcctl-metrics.timer / mcctl-autosave, units
+    that no longer exist. The module-wide leak-guard exemption hid all of it.
+    """
+    text = write_template(tmp_path / "c.toml").read_text(encoding="utf-8")
+
+    assert prometheus.default_path().name in text
+    assert f"$XDG_STATE_HOME/{util.APP}/{prometheus.default_path().name}" in text
+
+    shipped = set(util.render_units())
+    for unit in re.findall(r"\b[\w-]+\.(?:timer|service)\b", text):
+        assert unit in shipped, f"the generated config names a unit that does not exist: {unit}"
+    assert "lulism-metrics.timer" in text and "lulism-autosave" in text
+
+    # Every command the generated config tells the operator to run must be a
+    # command that still exists in 2.0.0 -- not the deprecated shim's name.
+    assert not re.search(r"`mcctl [a-z]", text), text
+
+    # ...while still saying where the old prom file was, so an operator whose
+    # node_exporter is reading it knows what to repoint.
+    assert "$XDG_STATE_HOME/mcctl/mcctl.prom" in text
 
 
 def test_template_refuses_overwrite(tmp_path: Path):

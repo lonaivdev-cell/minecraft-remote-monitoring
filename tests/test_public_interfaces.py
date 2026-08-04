@@ -64,12 +64,13 @@ def test_agent_hello_version_key_is_frozen():
 
 
 # Modules where every `mcctl` mention is a preserve-list identifier by design.
+# Keep this set as small as it can possibly be: a module-wide exemption hides
+# every future leak in that file, which is exactly how ~50 user-facing `mcctl …`
+# strings survived into 2.0.0's generated config and doctor hints. Prefer a
+# LEAK_ALLOWLIST_LINES entry naming the exact literal.
 LEAK_ALLOWLIST_MODULES = {
     "shim.py",        # the deprecated entry point — it *is* the mcctl command
     "util.py",        # LEGACY_APP + legacy_unit_names(): the migrator must know the old names
-    "doctor.py",      # legacy unit detection, the (mcctl|lulism) pgrep, 2026-06-11 notes
-    "prometheus.py",  # the 13 frozen mcctl_* metric names
-    "config.py",      # prom_path comment referencing the legacy default
 }
 
 # Individual lines elsewhere that must keep the old name. Allowlisting the exact
@@ -80,6 +81,11 @@ LEAK_ALLOWLIST_LINES = {
                        # only moves local XDG dirs, so renaming this orphans every server's
                        # cached vanilla jar with no migration path.
     "an older mcctl",  # server.py: a historical reference; "an older lulism" would be false.
+    '"mcctl" / "mcctl.prom"',          # doctor.py: the legacy textfile doctor warns about.
+    "(mcctl|lulism)",                  # doctor.py: pgrep must match a daemon under either name.
+    "replaces=('mcctl')",              # doctor.py: names the PKGBUILD field, per the preserve-list.
+    "$XDG_STATE_HOME/mcctl/mcctl.prom",  # config.py: the pre-2.0.0 prom_path default, quoted so
+                                         # the generated config tells the operator what moved.
 }
 
 

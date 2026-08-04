@@ -181,14 +181,21 @@ def test_watchdog_install_writes_units_to_xdg(isolated_xdg, capsys, monkeypatch)
 
     fake = FakeSystemctl()
     real_migrate_units = util.migrate_units
-    monkeypatch.setattr(util, "migrate_units", lambda run=None: real_migrate_units(fake))
+    monkeypatch.setattr(util, "migrate_units",
+                        lambda run=None, **kw: real_migrate_units(fake, **kw))
+    # The reload moved out of migrate_units() and into _install_units(); record
+    # what was on disk at the moment it fired.
+    reloaded_with: list[list[str]] = []
+    monkeypatch.setattr(util, "systemd_daemon_reload",
+                        lambda run=None: reloaded_with.append(
+                            sorted(p.name for p in util.user_unit_dir().iterdir())))
 
     assert _install_units() == 0
 
-    # migrate_units() really ran its full stop/disable/reload sequence for all
-    # 7 legacy units, but every systemctl invocation landed on the fake --
-    # never on subprocess, never on the real user bus.
-    assert len(fake.calls) == 7 + 7 + 1  # stop*7, disable*7, daemon-reload
+    # migrate_units() really ran its full stop/disable sequence for all 7 legacy
+    # units, but every systemctl invocation landed on the fake -- never on
+    # subprocess, never on the real user bus.
+    assert len(fake.calls) == 7 + 7  # stop*7, disable*7; the reload is the caller's now
     assert all(c[:2] == ["systemctl", "--user"] for c in fake.calls)
     touched = {c[-1] for c in fake.calls if c[-1].endswith((".service", ".timer"))}
     assert touched == set(util.legacy_unit_names())
@@ -197,3 +204,34 @@ def test_watchdog_install_writes_units_to_xdg(isolated_xdg, capsys, monkeypatch)
     assert "lulism-watchdog.service" in written and len(written) == 7
     text = (util.user_unit_dir() / "lulism-backup.service").read_text()
     assert "backup create --notify" in text
+
+    # Reloading before the new files land leaves systemd unaware of them until
+    # the operator runs a reload of their own.
+    assert reloaded_with == [written], reloaded_with
+
+
+def test_watchdog_install_reports_only_units_that_really_existed(
+        isolated_xdg, capsys, monkeypatch):
+    """migrate_units() used to return legacy_unit_names() unconditionally, so a
+    fresh install announced removing seven units that had never existed."""
+    from lulism import util
+    from lulism.cli import _install_units
+
+    calls: list[list[str]] = []
+    real_migrate_units = util.migrate_units
+    monkeypatch.setattr(util, "migrate_units",
+                        lambda run=None, **kw: real_migrate_units(calls.append, **kw))
+    monkeypatch.setattr(util, "systemd_daemon_reload", lambda run=None: None)
+
+    # fresh box: nothing was ever installed under the old names
+    assert _install_units() == 0
+    assert "removed legacy unit" not in capsys.readouterr().out
+
+    # a real 1.1.2 box: exactly the two units it actually had
+    unit_dir = util.user_unit_dir()
+    for name in ("mcctl-watchdog.service", "mcctl-backup.timer"):
+        (unit_dir / name).write_text("[Unit]\n", encoding="utf-8")
+    assert _install_units() == 0
+    out = capsys.readouterr().out
+    assert out.count("removed legacy unit") == 2
+    assert "mcctl-watchdog.service" in out and "mcctl-backup.timer" in out

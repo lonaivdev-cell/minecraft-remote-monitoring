@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import socket
+import stat
 import subprocess
 import urllib.request
 from pathlib import Path
@@ -52,23 +53,72 @@ def crashes_dir() -> Path:
 LEGACY_APP = "mcctl"
 
 
+def _copy_filter(root: Path, *, skip_top: tuple[str, ...] = ()):
+    """Build a `shutil.copytree(ignore=...)` callback for the legacy migration.
+
+    Two things never get copied:
+
+    * anything that is not a plain file or a directory. `runtime_dir()` falls
+      back to ``cache_dir()/"run"`` whenever ``XDG_RUNTIME_DIR`` is unset (the
+      normal case on a headless box), which puts **live SSH ControlMaster unix
+      sockets inside the very tree being migrated**. `copytree` raises
+      ``OSError: [Errno 6] No such device or address`` on a socket, and the
+      half-written destination it leaves behind would then satisfy the
+      ``dst.exists()`` guard and skip the migration permanently.
+    * `skip_top` names at the top level — used to drop that ``run`` directory
+      outright, since the design spec keeps `runtime_dir()` out of the
+      migration entirely (it is ephemeral by definition).
+    """
+    def ignore(directory, names):
+        here = Path(directory)
+        skip = set(skip_top) if here == root else set()
+        for name in names:
+            if name in skip:
+                continue
+            try:
+                st = (here / name).stat()  # follows symlinks: a dangling one raises
+            except OSError:
+                skip.add(name)
+                continue
+            if not (stat.S_ISREG(st.st_mode) or stat.S_ISDIR(st.st_mode)):
+                skip.add(name)  # socket / fifo / device: not migratable state
+        return skip
+    return ignore
+
+
 def migrate_legacy_dirs() -> list[tuple[Path, Path]]:
     """Copy pre-2.0.0 mcctl XDG dirs to their lulism equivalents, once.
 
     Copies rather than moves so the mcctl trees remain a rollback path. Skips
     any destination that already exists, which makes this idempotent and means
     a hand-edited lulism config is never clobbered.
+
+    Best-effort: a compatibility migration must never make the CLI unusable.
+    cli.main() has to call this *before* the try/except that maps exceptions to
+    exit codes (the migration must precede setup_logging()'s ensure_dirs()), so
+    an exception escaping here is a raw traceback on every single command —
+    including the phone's `mcctl agent`. Any copy failure is logged and skipped,
+    and the partial destination is removed so a later run can retry.
     """
     pairs = (
-        (_xdg("XDG_CONFIG_HOME", ".config") / LEGACY_APP, config_dir()),
-        (_xdg("XDG_STATE_HOME", ".local/state") / LEGACY_APP, state_dir()),
-        (_xdg("XDG_CACHE_HOME", ".cache") / LEGACY_APP, cache_dir()),
+        (_xdg("XDG_CONFIG_HOME", ".config") / LEGACY_APP, config_dir(), ()),
+        (_xdg("XDG_STATE_HOME", ".local/state") / LEGACY_APP, state_dir(), ()),
+        # "run" is runtime_dir()'s no-XDG_RUNTIME_DIR fallback: ephemeral SSH
+        # control sockets, explicitly not migrated.
+        (_xdg("XDG_CACHE_HOME", ".cache") / LEGACY_APP, cache_dir(), ("run",)),
     )
     done: list[tuple[Path, Path]] = []
-    for src, dst in pairs:
+    for src, dst, skip_top in pairs:
         if dst.exists() or not src.is_dir():
             continue
-        shutil.copytree(src, dst)
+        try:
+            shutil.copytree(src, dst, ignore=_copy_filter(src, skip_top=skip_top))
+        except (OSError, shutil.Error) as e:
+            log.warning("could not migrate %s -> %s: %s — continuing without it "
+                        "(the original is untouched; retry after fixing the cause)",
+                        src, dst, e)
+            shutil.rmtree(dst, ignore_errors=True)  # never leave a partial copy behind
+            continue
         log.info("migrated %s -> %s (the original is kept as a rollback path)", src, dst)
         done.append((src, dst))
     return done
@@ -177,7 +227,7 @@ class LockHeldError(RuntimeError):
 
 
 class OpsLock:
-    """flock-based mutex so two mcctl invocations can't fight over start/stop/backup."""
+    """flock-based mutex so two lulism invocations can't fight over start/stop/backup."""
 
     def __init__(self, name: str = "ops"):
         ensure_dirs()
@@ -192,7 +242,7 @@ class OpsLock:
             self._fh.close()
             self._fh = None
             raise LockHeldError(
-                "another mcctl operation is already running (start/stop/backup/watchdog action)"
+                "another lulism operation is already running (start/stop/backup/watchdog action)"
             ) from e
         self._fh.write(str(os.getpid()))
         self._fh.flush()
@@ -279,27 +329,44 @@ def user_unit_dir() -> Path:
     return _xdg("XDG_CONFIG_HOME", ".config") / "systemd" / "user"
 
 
-def render_units(*, exe: str = "lulism") -> dict[str, str]:
+def render_units(*, exe: str = "/usr/bin/lulism") -> dict[str, str]:
     """The unit files shipped in lulism/units/ (the PKGBUILD installs the same
     files verbatim), with ExecStart rewritten for non-/usr/bin installs (pipx).
 
-    An `exe` naming the deprecated `mcctl` shim is never honoured, even if a
-    caller passes one explicitly: a systemd unit is long-lived and must not
-    hardcode a permanent dependency on a shim that is removed at 3.0.0. The
-    clamp matches the exact basename ("mcctl"), not a suffix, so an unrelated
-    install path that merely ends in those letters (e.g. a fork's
-    /opt/foomcctl/bin/foomcctl) keeps its own exe untouched."""
+    `exe` must be an **absolute path** to a `lulism` binary, and the default is
+    absolute for the same reason: systemd resolves a bare `ExecStart=` filename
+    against its own fixed search path, which does not include ~/.local/bin, so a
+    relative exe fails with 203/EXEC on precisely the pipx deployment this
+    project targets.
+
+    An `exe` naming the deprecated `mcctl` shim is never honoured either, even
+    if a caller passes one explicitly: a systemd unit is long-lived and must not
+    hardcode a permanent dependency on a shim that is removed at 3.0.0. pipx
+    installs the shim and the real entry point into the same bin directory, so
+    the shim's `lulism` sibling is the right substitute. The clamp matches the
+    exact basename ("mcctl"), not a suffix, so an unrelated install path that
+    merely ends in those letters (e.g. a fork's /opt/foomcctl/bin/foomcctl)
+    keeps its own exe untouched.
+
+    Anything left that is not an absolute path named `lulism` falls back to
+    /usr/bin/lulism rather than being written into a unit file.
+    """
     from importlib import resources
-    if Path(exe).name == "mcctl":
-        log.debug("render_units: exe %r names the deprecated mcctl shim, using lulism instead", exe)
-        exe = "lulism"
+    p = Path(exe)
+    if p.name == "mcctl":
+        p = p.parent / "lulism"
+        log.debug("render_units: exe %r names the deprecated mcctl shim, using %s instead", exe, p)
+    if p.name != "lulism" or not p.is_absolute():
+        log.debug("render_units: exe %r is not an absolute lulism path, using /usr/bin/lulism", exe)
+        p = Path("/usr/bin/lulism")
+    resolved = str(p)
     units: dict[str, str] = {}
     for entry in (resources.files("lulism") / "units").iterdir():
         if not entry.name.endswith((".service", ".timer")):
             continue
         text = entry.read_text(encoding="utf-8")
-        if exe != "/usr/bin/lulism":
-            text = text.replace("ExecStart=/usr/bin/lulism ", f"ExecStart={exe} ")
+        if resolved != "/usr/bin/lulism":
+            text = text.replace("ExecStart=/usr/bin/lulism ", f"ExecStart={resolved} ")
         units[entry.name] = text
     return units
 
@@ -316,21 +383,38 @@ def legacy_unit_names() -> tuple[str, ...]:
     )
 
 
-def migrate_units(run=None) -> list[str]:
-    """Stop, disable and remove the pre-2.0.0 units, then daemon-reload.
+def _systemctl_user(cmd: list[str]) -> int:
+    try:
+        return subprocess.run(cmd, capture_output=True, timeout=5).returncode
+    except (OSError, subprocess.TimeoutExpired) as e:
+        log.warning("%s failed: %s", " ".join(cmd), e)
+        return 1
+
+
+def systemd_daemon_reload(run=None) -> None:
+    """`systemctl --user daemon-reload`, injectable so callers stay testable."""
+    (run or _systemctl_user)(["systemctl", "--user", "daemon-reload"])
+
+
+def migrate_units(run=None, *, daemon_reload: bool = True) -> list[str]:
+    """Stop, disable and remove the pre-2.0.0 units. Returns what it removed.
 
     Ordering is the safety property: a box with both mcctl-watchdog.service and
     lulism-watchdog.service enabled has two restart authorities, which is the
     2026-06-11 outage. Every old unit is stopped and disabled before any new one
     is installed. `run` is injected so the ordering is testable without systemd.
+
+    Stop and disable run for all seven names unconditionally — disabling a unit
+    whose file is already gone is what clears a dangling enable symlink, which
+    `pacman`'s `replaces=('mcctl')` path leaves behind. The **return value**, by
+    contrast, lists only the unit files that actually existed and were deleted,
+    so a caller cannot announce removals that never happened on a fresh install.
+
+    `daemon_reload=False` hands the reload back to the caller, which matters for
+    an install: reloading before the new unit files land leaves systemd unaware
+    of them until somebody reloads a second time.
     """
-    if run is None:
-        def run(cmd: list[str]) -> int:
-            try:
-                return subprocess.run(cmd, capture_output=True, timeout=5).returncode
-            except (OSError, subprocess.TimeoutExpired) as e:
-                log.warning("migrate_units: %s failed: %s", " ".join(cmd), e)
-                return 1
+    run = run or _systemctl_user
 
     names = legacy_unit_names()
     for unit in names:
@@ -338,11 +422,17 @@ def migrate_units(run=None) -> list[str]:
     for unit in names:
         run(["systemctl", "--user", "disable", unit])
     unit_dir = user_unit_dir()
+    removed: list[str] = []
     for unit in names:
-        (unit_dir / unit).unlink(missing_ok=True)
-    run(["systemctl", "--user", "daemon-reload"])
-    log.info("migrated %d pre-2.0.0 systemd units", len(names))
-    return list(names)
+        path = unit_dir / unit
+        if path.exists():
+            path.unlink()
+            removed.append(unit)
+    if daemon_reload:
+        systemd_daemon_reload(run)
+    log.info("stopped and disabled %d pre-2.0.0 systemd units, removed %d unit file(s)",
+             len(names), len(removed))
+    return removed
 
 
 # ---------------------------------------------------------------- misc

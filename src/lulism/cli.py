@@ -635,17 +635,28 @@ def cmd_watchdog(ctx: Ctx) -> int:
 
 def _install_units() -> int:
     """Install the systemd user units shipped inside the package (single source
-    shared with the PKGBUILD), rewriting ExecStart for non-/usr/bin installs."""
-    units = util.render_units(exe=sys.argv[0] if sys.argv[0].endswith("lulism") else "lulism")
-    for unit in util.migrate_units():
+    shared with the PKGBUILD), rewriting ExecStart for non-/usr/bin installs.
+
+    Order matters twice over. The pre-2.0.0 units are stopped, disabled and
+    removed before any new unit is written (never two restart authorities — the
+    2026-06-11 outage), and the daemon-reload happens *after* the new files land,
+    so systemd knows about them the moment this returns rather than only after
+    the operator runs a reload of their own.
+    """
+    # render_units() clamps this: the shim's `lulism` sibling if the CLI was
+    # reached through the deprecated shim, and /usr/bin/lulism for anything that
+    # is not an absolute lulism path (a relative ExecStart is resolved against
+    # systemd's own fixed PATH, which excludes ~/.local/bin, and fails 203/EXEC).
+    units = util.render_units(exe=sys.argv[0])
+    for unit in util.migrate_units(daemon_reload=False):
         rc.print(f"[yellow]removed legacy unit[/yellow] {unit}")
     unit_dir = util.user_unit_dir()
     unit_dir.mkdir(parents=True, exist_ok=True)
     for name, content in units.items():
         (unit_dir / name).write_text(content, encoding="utf-8")
         rc.print(f"[green]wrote[/green] {unit_dir / name}")
+    util.systemd_daemon_reload()
     rc.print("\nenable with (fish):")
-    rc.print("  systemctl --user daemon-reload")
     rc.print("  systemctl --user enable --now lulism-watchdog.service lulism-backup.timer lulism-autosave.timer")
     return 0
 

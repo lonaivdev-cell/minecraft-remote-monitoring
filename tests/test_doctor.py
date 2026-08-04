@@ -5,9 +5,25 @@ Driven entirely through FakeTransport."""
 
 from __future__ import annotations
 
+import pytest
+
 from lulism import doctor as doctor_mod
-from lulism import state
+from lulism import state, util
 from lulism.doctor import Level, run_doctor
+
+_REAL_WATCHDOG_COUNT = doctor_mod._watchdog_process_count
+_REAL_UNIT_IS_ACTIVE = doctor_mod._unit_is_active
+
+
+@pytest.fixture(autouse=True)
+def _no_real_local_probes(monkeypatch):
+    """_ops_checks() asks this machine about its own units and watchdog
+    processes. Pin all three so the suite cannot depend on what the developer's
+    box happens to have enabled or running; the tests that care override them."""
+    monkeypatch.setattr(doctor_mod, "_watchdog_process_count", lambda: 0)
+    monkeypatch.setattr(doctor_mod, "_unit_is_enabled", lambda _u: False)
+    monkeypatch.setattr(doctor_mod, "_unit_is_active", lambda _u: False)
+
 
 VARIABLES = (
     'SKIP_JAVA_CHECK="true"\n'
@@ -101,14 +117,13 @@ def test_ops_root_mount_needs_no_nofail(fake_t, cfg):
 
 
 def test_local_watchdog_loose_process_pattern_covers_both_names(monkeypatch):
-    """_local_watchdog_active()'s pgrep fallback (used when the systemd unit
-    isn't the one running -- a manual `lulism watchdog run &`, a dev
-    invocation, or a stop that didn't fully reap the process) must catch a
-    daemon under either name. A pattern that only matches the post-2.0.0
-    `lulism watchdog run` would report "no watchdog" for a leftover
-    pre-migration `mcctl watchdog run` process, which is a false negative that
-    feeds the brain-placement check and can prompt a second watchdog -- the
-    2026-06-11 two-restart-authorities incident this task exists to prevent."""
+    """_watchdog_process_count()'s pgrep (used when the systemd unit isn't the
+    one running -- a manual `lulism watchdog run &`, a dev invocation, or a stop
+    that didn't fully reap the process) must catch a daemon under either name. A
+    pattern that only matched the post-2.0.0 `lulism watchdog run` would report
+    "no watchdog" for a leftover pre-migration process, which is a false
+    negative that feeds the brain-placement check and can prompt a second
+    watchdog -- the 2026-06-11 two-restart-authorities incident."""
     import re
     import subprocess
 
@@ -116,17 +131,104 @@ def test_local_watchdog_loose_process_pattern_covers_both_names(monkeypatch):
 
     def fake_run(cmd, **kwargs):
         calls.append(list(cmd))
-        return subprocess.CompletedProcess(cmd, 1)  # "not active" / "not found"
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
 
     monkeypatch.setattr(doctor_mod.subprocess, "run", fake_run)
+    monkeypatch.setattr(doctor_mod, "_watchdog_process_count", _REAL_WATCHDOG_COUNT)
+    monkeypatch.setattr(doctor_mod, "_unit_is_active", _REAL_UNIT_IS_ACTIVE)
     assert doctor_mod._local_watchdog_active() is False
 
-    pgrep_calls = [c for c in calls if c[:2] == ["pgrep", "-f"]]
+    pgrep_calls = [c for c in calls if c[0] == "pgrep"]
     assert len(pgrep_calls) == 1, calls
-    pattern = pgrep_calls[0][2]
+    assert "-c" in pgrep_calls[0], "a bool cannot tell one watchdog from two"
+    pattern = pgrep_calls[0][-1]
     assert re.search(pattern, "mcctl watchdog run"), pattern
     assert re.search(pattern, "lulism watchdog run"), pattern
     assert not re.search(pattern, "totally unrelated process"), pattern
+
+
+def test_watchdog_process_count_parses_pgrep_c(monkeypatch):
+    import subprocess
+
+    def counting(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 0, stdout="2\n", stderr="")
+
+    monkeypatch.setattr(doctor_mod.subprocess, "run", counting)
+    assert _REAL_WATCHDOG_COUNT() == 2
+
+
+def test_watchdog_process_count_survives_a_missing_pgrep(monkeypatch):
+    def missing(cmd, **kwargs):
+        raise OSError("no pgrep here")
+
+    monkeypatch.setattr(doctor_mod.subprocess, "run", missing)
+    assert _REAL_WATCHDOG_COUNT() == 0
+
+
+# -------- the dual-authority verdict: enablement alone never saw the pacman path
+
+
+@pytest.mark.parametrize(("enabled", "active", "procs", "legacy_warns", "dup_warns"), [
+    # nothing left over: the clean post-migration box
+    (False, False, 0, False, False),
+    # the pipx path: `mcctl watchdog install` wrote the unit, it is still enabled
+    (True, False, 1, True, False),
+    # the pacman path (`makepkg -si`, PKGBUILD replaces=('mcctl')): pacman deleted
+    # the unit FILES, so is-enabled answers "not-found" while the daemon lives on.
+    # This is the case the enablement-only check reported as a green tick.
+    (False, True, 1, True, False),
+    (True, True, 1, True, False),
+    # two daemons on one machine: the 2026-06-11 incident itself. Units may say
+    # nothing at all (both running loose), so only the count can see it.
+    (False, False, 2, False, True),
+    (True, False, 2, True, True),
+])
+def test_dual_restart_authority_verdicts(fake_t, cfg, monkeypatch,
+                                         enabled, active, procs, legacy_warns, dup_warns):
+    _layout(fake_t, cfg)
+    monkeypatch.setattr(doctor_mod, "_unit_is_enabled",
+                        lambda u: enabled and u in util.legacy_unit_names())
+    monkeypatch.setattr(doctor_mod, "_unit_is_active",
+                        lambda u: active and u in util.legacy_unit_names())
+    monkeypatch.setattr(doctor_mod, "_watchdog_process_count", lambda: procs)
+
+    res = _by_name(run_doctor(cfg, fake_t))
+
+    if legacy_warns:
+        r = res["ops: pre-2.0.0 units still present"]
+        assert r.level is Level.WARN
+        assert "mcctl-watchdog.service" in r.detail
+        assert ("enabled" in r.detail) is enabled
+        assert ("active" in r.detail) is active
+        assert "systemctl --user disable --now" in r.hint
+        # the hint must be pasteable: bare unit names, not the annotated detail
+        assert "(" not in r.hint.split("disable --now", 1)[1]
+    else:
+        assert res["ops: no pre-2.0.0 units present"].level is Level.OK
+
+    if dup_warns:
+        assert res["ops: one watchdog per machine"].level is Level.WARN
+        assert f"{procs} on this machine" in res["ops: one watchdog per machine"].detail
+    elif procs:
+        assert res["ops: one watchdog per machine"].level is Level.OK
+    else:
+        assert "ops: one watchdog per machine" not in res
+
+
+def test_two_watchdogs_on_the_box_are_counted_over_ssh(fake_t, cfg, monkeypatch):
+    """The box is where the brain lives, so a duplicate there is the dangerous
+    one. `_local_watchdog_active()` returns a bool and cannot tell one from two."""
+    _layout(fake_t, cfg)
+    _ssh_mode(cfg, monkeypatch, local_wd=False)
+    fake_t.expect("pgrep -af '(mcctl|lulism) watchdog run'",
+                  out="888 python3 /usr/bin/mcctl watchdog run\n"
+                      "999 python3 /usr/bin/lulism watchdog run\n")
+    fake_t.expect("loginctl show-user", out="Linger=yes\n")
+    res = _by_name(run_doctor(cfg, fake_t))
+    dup = res["ops: one watchdog per machine"]
+    assert dup.level is Level.WARN
+    assert f"2 on {cfg.server.host}" in dup.detail
+    assert "disable --now" in dup.hint
 
 
 def _refuse(*a, **k):

@@ -121,7 +121,7 @@ def run_doctor(cfg: Config, t: BaseTransport, *, fix: bool = False) -> list[Chec
                 out.append(CheckResult(f"vars: {key}", Level.FIXED, f"{have or 'unset'} -> {want}"))
             else:
                 out.append(_warn(f"vars: {key}", f"is {have or 'unset'}, want {want} — {why}",
-                                 "mcctl doctor --fix"))
+                                 "lulism doctor --fix"))
         java = propsmod.get_var(vtext, "JAVA") or ""
         if java:
             if t.run(f"test -x {q(java)}", timeout=15).ok:
@@ -146,7 +146,7 @@ def run_doctor(cfg: Config, t: BaseTransport, *, fix: bool = False) -> list[Chec
             else:
                 out.append(_ok("vars: heap", detail))
         else:
-            out.append(_warn("vars: heap", "no -Xmx in JAVA_ARGS", "mcctl jvm heap 12G"))
+            out.append(_warn("vars: heap", "no -Xmx in JAVA_ARGS", "lulism jvm heap 12G"))
         if changed:
             propsmod.save_variables(t, cfg, vtext)
     except (TransportError, propsmod.PropError) as e:
@@ -165,13 +165,13 @@ def run_doctor(cfg: Config, t: BaseTransport, *, fix: bool = False) -> list[Chec
                 out.append(_ok(f"props: {key}={want}"))
             else:
                 out.append(_warn(f"props: {key}", f"is {have!r}, expected {want!r} ({why})",
-                                 f"mcctl props set {key} {want}"))
+                                 f"lulism props set {key} {want}"))
         rcon_on = pf.get("enable-rcon") == "true" and bool(pf.get("rcon.password"))
         if rcon_on:
             out.append(_ok("props: rcon enabled", f"port {pf.get('rcon.port')}"))
             if pf.get("broadcast-rcon-to-ops") == "true":
-                out.append(_warn("props: broadcast-rcon-to-ops", "true — ops see every mcctl query",
-                                 "mcctl props set broadcast-rcon-to-ops false"))
+                out.append(_warn("props: broadcast-rcon-to-ops", "true — ops see every lulism query",
+                                 "lulism props set broadcast-rcon-to-ops false"))
         elif fix:
             pw = secrets.token_urlsafe(24)
             pf.set("enable-rcon", "true")
@@ -182,9 +182,9 @@ def run_doctor(cfg: Config, t: BaseTransport, *, fix: bool = False) -> list[Chec
             out.append(CheckResult("props: rcon", Level.FIXED,
                                    "enabled with a generated password (takes effect on restart)"))
         else:
-            out.append(_warn("props: rcon", "disabled — mcctl will drive the console via tmux "
+            out.append(_warn("props: rcon", "disabled — lulism will drive the console via tmux "
                              "(works, but slower and scrape-based)",
-                             "mcctl doctor --fix enables it with a random password"))
+                             "lulism doctor --fix enables it with a random password"))
     except TransportError as e:
         out.append(_warn("props: server.properties", f"unreadable: {e}",
                          "fresh pack? boot once to generate it"))
@@ -200,7 +200,7 @@ def run_doctor(cfg: Config, t: BaseTransport, *, fix: bool = False) -> list[Chec
         out.append(_ok("backup: remote_dir", cfg.backup.remote_dir))
     else:
         out.append(_warn("backup: remote_dir", f"{cfg.backup.remote_dir} missing",
-                         "mcctl doctor --fix creates it"))
+                         "lulism doctor --fix creates it"))
     r = t.run(f"df -B1 --output=avail {q(s.server_dir)} | tail -1", timeout=15)
     if r.out.strip().isdigit():
         free = int(r.out.strip())
@@ -212,7 +212,7 @@ def run_doctor(cfg: Config, t: BaseTransport, *, fix: bool = False) -> list[Chec
         out.append(_ok("remote: spark mod present"))
     else:
         out.append(_warn("remote: spark", "no spark*.jar in mods/ — TPS monitoring degraded",
-                         "MMC5 ships spark; if removed, add it back for `mcctl tps`"))
+                         "MMC5 ships spark; if removed, add it back for `lulism tps`"))
 
     # ---------------- one restart authority + boot resilience (2026-06-11 incident)
     out.extend(_ops_checks(cfg, t, fix=fix))
@@ -223,7 +223,7 @@ def run_doctor(cfg: Config, t: BaseTransport, *, fix: bool = False) -> list[Chec
             with socket.create_connection((s.host, s.rcon_port), timeout=3):
                 out.append(_fail("security: rcon exposure",
                                  f"{s.host}:{s.rcon_port} is reachable from the internet!",
-                                 "block it in the OCI security list / ufw — mcctl tunnels RCON "
+                                 "block it in the OCI security list / ufw — lulism tunnels RCON "
                                  "over SSH and needs no open port"))
         except OSError:
             out.append(_ok("security: rcon port closed from outside"))
@@ -250,21 +250,51 @@ def _ops_checks(cfg: Config, t: BaseTransport, *, fix: bool) -> list[CheckResult
         out.append(_warn("ops: legacy watchdog on server",
                          f"running: {r.out.strip().splitlines()[0][:90]}",
                          "two self-healers fight over restarts and can relaunch a "
-                         "crash-looping server — disable it; the mcctl watchdog has "
+                         "crash-looping server — disable it; the lulism watchdog has "
                          "the crash-loop breaker"))
     else:
         out.append(_ok("ops: no legacy watchdog on server"))
 
-    # a pre-2.0.0 unit still enabled alongside its lulism replacement is the
-    # 2026-06-11 incident in miniature: two restart authorities.
-    stale = [u for u in util.legacy_unit_names() if _unit_is_enabled(u)]
+    # a pre-2.0.0 unit still enabled *or still running* alongside its lulism
+    # replacement is the 2026-06-11 incident in miniature: two restart
+    # authorities. Enablement alone is not enough to see it — `makepkg -si`
+    # with the PKGBUILD's replaces=('mcctl') deletes the old unit files while
+    # the running watchdog survives, and is-enabled then answers "not-found".
+    stale: list[str] = []
+    for unit in util.legacy_unit_names():
+        states = [s for s, on in (("enabled", _unit_is_enabled(unit)),
+                                  ("active", _unit_is_active(unit))) if on]
+        if states:
+            stale.append(f"{unit} ({', '.join(states)})")
     if stale:
-        out.append(_warn("ops: pre-2.0.0 units still enabled",
+        names = [s.split(" ", 1)[0] for s in stale]
+        out.append(_warn("ops: pre-2.0.0 units still present",
                          ", ".join(stale),
                          "two restart authorities — run `lulism watchdog install` to "
-                         "migrate, or: systemctl --user disable --now " + " ".join(stale)))
+                         "migrate, or: systemctl --user disable --now " + " ".join(names)))
     else:
-        out.append(_ok("ops: no pre-2.0.0 units enabled"))
+        out.append(_ok("ops: no pre-2.0.0 units present"))
+
+    # Exactly one watchdog daemon per machine. A *count*, not a truthiness test:
+    # one and two are the whole difference between healthy and the 2026-06-11
+    # outage, and on the pacman upgrade path (replaces=('mcctl')) the old unit
+    # files are gone while the old daemon still runs — nothing above can see it.
+    local_wd_count = _watchdog_process_count()
+    box_procs: list[str] = []
+    if s.transport == "ssh":
+        r = t.run("pgrep -af '(mcctl|lulism) watchdog run' 2>/dev/null | grep -v pgrep || true",
+                  timeout=15)
+        box_procs = [ln for ln in r.out.splitlines() if ln.strip()]
+    dup = [f"{n} on {where}" for n, where in ((local_wd_count, "this machine"),
+                                              (len(box_procs), s.host)) if n > 1]
+    if dup:
+        out.append(_warn("ops: one watchdog per machine",
+                         " and ".join(dup) + " — two watchdog daemons share no "
+                         "desired/armed state and will fight over restarts",
+                         "keep one: `systemctl --user disable --now lulism-watchdog.service` "
+                         "on the loser, then kill any leftover `watchdog run` process"))
+    elif local_wd_count or box_procs:
+        out.append(_ok("ops: one watchdog per machine"))
 
     legacy_prom = util._xdg("XDG_STATE_HOME", ".local/state") / "mcctl" / "mcctl.prom"
     if legacy_prom.exists():
@@ -281,10 +311,10 @@ def _ops_checks(cfg: Config, t: BaseTransport, *, fix: bool) -> list[CheckResult
         restart = info.get("Restart") or "no"
         if restart != "no" and armed:
             out.append(_warn("ops: two restart authorities",
-                             f"minecraft.service has Restart={restart} AND the mcctl "
+                             f"minecraft.service has Restart={restart} AND the lulism "
                              "watchdog is armed",
                              "keep ONE healer: set Restart=no in the unit (systemd then "
-                             "only bounds shutdown, which is good) or `mcctl watchdog disarm`"))
+                             "only bounds shutdown, which is good) or `lulism watchdog disarm`"))
         else:
             out.append(_ok("ops: systemd unit", f"minecraft.service Restart={restart}, "
                            f"watchdog {'armed' if armed else 'disarmed'} — no conflict"))
@@ -302,7 +332,7 @@ def _ops_checks(cfg: Config, t: BaseTransport, *, fix: bool) -> list[CheckResult
                 out.append(_warn("ops: start.sh RESTART=true",
                                  "start.sh relaunches the JVM in-place on every crash — "
                                  "an unbounded loop the watchdog's breaker cannot stop",
-                                 "mcctl doctor --fix sets RESTART=false; restarts belong to "
+                                 "lulism doctor --fix sets RESTART=false; restarts belong to "
                                  "the watchdog (backoff + crash-loop breaker)"))
         elif restart_var:
             out.append(_ok("ops: start.sh RESTART=false"))
@@ -329,15 +359,13 @@ def _ops_checks(cfg: Config, t: BaseTransport, *, fix: bool) -> list[CheckResult
     # exactly like two restart authorities did, just across machines.
     local_wd = _local_watchdog_active()
     if s.transport == "ssh":
-        r = t.run("pgrep -af '(mcctl|lulism) watchdog run' 2>/dev/null | grep -v pgrep || true",
-                  timeout=15)
-        box_wd = bool(r.out.strip())
+        box_wd = bool(box_procs)
         if box_wd and local_wd:
             out.append(_warn("ops: brain placement",
-                             "mcctl watchdog daemons on BOTH this machine and the box — two "
+                             "lulism watchdog daemons on BOTH this machine and the box — two "
                              "brains with separate desired/armed state will fight over restarts",
                              "keep one (the box, per DESIGN-BRAIN.md): on the other, run "
-                             "`mcctl watchdog disarm` and `systemctl --user disable --now "
+                             "`lulism watchdog disarm` and `systemctl --user disable --now "
                              "lulism-watchdog.service`"))
         elif box_wd:
             out.append(_ok("ops: brain placement",
@@ -354,10 +382,10 @@ def _ops_checks(cfg: Config, t: BaseTransport, *, fix: bool) -> list[CheckResult
                            "is brain-on-box — DESIGN-BRAIN.md §6)"))
         else:
             out.append(_warn("ops: brain placement",
-                             "no mcctl watchdog daemon running on either machine — "
+                             "no lulism watchdog daemon running on either machine — "
                              "self-healing is off",
                              "enable it on the box (DESIGN-BRAIN.md §6 runbook), "
-                             "then `mcctl watchdog arm`"))
+                             "then `lulism watchdog arm`"))
     else:  # local transport: this machine IS the box (or a dev sandbox)
         if local_wd:
             out.append(_ok("ops: brain placement", "watchdog runs on this machine (the box)"))
@@ -366,10 +394,10 @@ def _ops_checks(cfg: Config, t: BaseTransport, *, fix: bool) -> list[CheckResult
                 out.append(lr)
         else:
             out.append(_warn("ops: brain placement",
-                             "no mcctl watchdog daemon running on this machine — "
+                             "no lulism watchdog daemon running on this machine — "
                              "self-healing is off",
                              "systemctl --user enable --now lulism-watchdog.service, "
-                             "then `mcctl watchdog arm`"))
+                             "then `lulism watchdog arm`"))
 
     return out
 
@@ -387,26 +415,43 @@ def _unit_is_enabled(unit: str) -> bool:
     return r.stdout.strip().startswith(("enabled", "linked"))
 
 
-def _local_watchdog_active() -> bool:
-    """Is a `lulism watchdog run` daemon alive on THIS machine (unit or loose
-    process)? The loose-process check also matches a leftover pre-migration
-    `mcctl watchdog run` process, so a half-migrated box (old unit disabled but
-    a daemon still running loose) is still detected rather than reported as
-    "no watchdog" -- a false negative there would prompt a second watchdog and
-    reproduce the 2026-06-11 two-restart-authorities incident."""
+def _unit_is_active(unit: str) -> bool:
+    """True if `systemctl --user is-active` reports the unit running.
+
+    The companion to _unit_is_enabled(): the documented Arch upgrade path
+    (`makepkg -si`, PKGBUILD `replaces=('mcctl')`) has pacman delete the old
+    unit *files* while the old watchdog keeps running, so `is-enabled` answers
+    "not-found" for a unit that is very much alive."""
     try:
-        r = subprocess.run(["systemctl", "--user", "is-active", "--quiet",
-                            "lulism-watchdog.service"], timeout=5, capture_output=True)
-        if r.returncode == 0:
-            return True
-    except (OSError, subprocess.TimeoutExpired):
-        pass
-    try:
-        r = subprocess.run(["pgrep", "-f", "(mcctl|lulism) watchdog run"],
-                           timeout=5, capture_output=True)
-        return r.returncode == 0
+        r = subprocess.run(["systemctl", "--user", "is-active", unit],
+                           timeout=5, capture_output=True, text=True)
     except (OSError, subprocess.TimeoutExpired):
         return False
+    return r.stdout.strip() == "active"
+
+
+def _watchdog_process_count() -> int:
+    """How many `(mcctl|lulism) watchdog run` daemons are alive on THIS machine.
+
+    A count, not a bool: `_local_watchdog_active()` cannot tell one watchdog
+    from two, and two is the 2026-06-11 outage. The pattern matches a leftover
+    pre-migration daemon running under the old name as well, so a half-migrated box
+    (old unit file deleted by pacman but the daemon still running loose) is
+    counted rather than reported as "no watchdog" -- a false negative there
+    would prompt a second watchdog and reproduce that incident exactly."""
+    try:
+        r = subprocess.run(["pgrep", "-c", "-f", "(mcctl|lulism) watchdog run"],
+                           timeout=5, capture_output=True, text=True)
+    except (OSError, subprocess.TimeoutExpired):
+        return 0
+    n = r.stdout.strip()
+    return int(n) if n.isdigit() else 0
+
+
+def _local_watchdog_active() -> bool:
+    """Is a `lulism watchdog run` daemon alive on THIS machine (unit or loose
+    process)?"""
+    return _unit_is_active("lulism-watchdog.service") or _watchdog_process_count() > 0
 
 
 def _local_linger() -> str:
