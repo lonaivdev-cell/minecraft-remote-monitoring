@@ -1,10 +1,10 @@
 [Desktop Entry]
 Type=Application
-Name=mcctl
+Name=LULiSM
 GenericName=Minecraft Server Monitor
 Comment=Remote control & monitoring for a modded Minecraft server over SSH
-Exec=mcctl-gui
-Icon=io.github.lonaivdev_cell.mcctl
+Exec=lulism-gui
+Icon=io.github.lonaivdev_cell.lulism
 Terminal=false
 Categories=Utility;Monitor;Network;RemoteAccess;
 Keywords=minecraft;server;ssh;monitor;tps;backup;carborioland;

@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "mcctl"
-dynamic = ["version"]   # single source of truth: src/mcctl/__init__.py __version__ (see release.yml)
-description = "Remote control & monitoring for a modded Minecraft server over SSH (Arch Linux client)"
+name = "lulism"
+dynamic = ["version"]   # single source of truth: src/lulism/__init__.py __version__ (see release.yml)
+description = "Legit Ultimate Linux Server Monitor — remote control & monitoring for game servers and hosts over SSH"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -31,7 +31,7 @@ where = ["src"]
 version = { attr = "lulism.__version__" }
 
 [tool.setuptools.package-data]
-mcctl = ["units/*"]
+lulism = ["units/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

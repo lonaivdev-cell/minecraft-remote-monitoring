@@ -1,6 +1,6 @@
 name: release
 
-# The release version is the single source of truth in src/mcctl/__init__.py (__version__),
+# The release version is the single source of truth in src/lulism/__init__.py (__version__),
 # kept in lockstep with the Android APK. On every push to main this reads that version and —
 # only if no matching GitHub Release/tag exists yet — runs the gate, builds the APK, and
 # publishes a Release tagged v<version> with the APK attached (the artifact Obtainium installs).
@@ -34,8 +34,8 @@ jobs:
       - name: Resolve version from source
         id: v
         run: |
-          VERSION=$(grep -oP '__version__\s*=\s*"\K[^"]+' src/mcctl/__init__.py)
-          [ -n "$VERSION" ] || { echo "could not read __version__ from src/mcctl/__init__.py"; exit 1; }
+          VERSION=$(grep -oP '__version__\s*=\s*"\K[^"]+' src/lulism/__init__.py)
+          [ -n "$VERSION" ] || { echo "could not read __version__ from src/lulism/__init__.py"; exit 1; }
           TAG="v$VERSION"
           # versionCode = major*10000 + minor*100 + patch. MUST increase every release or
           # Android/Obtainium treats the APK as already-installed and won't upgrade — the
@@ -169,7 +169,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: "mcctl ${{ needs.version.outputs.tag }}"
+          name: "lulism ${{ needs.version.outputs.tag }}"
           tag_name: ${{ needs.version.outputs.tag }}
           generate_release_notes: true
           files: ${{ steps.apk.outputs.path }}

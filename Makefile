@@ -18,7 +18,7 @@ install-user:   ## non-Arch fallback (pipx recommended over this)
 	pip install --user .
 
 install-units:  ## user units without pacman (pipx installs)
-	mcctl watchdog install
+	lulism watchdog install
 
 update:         ## pull + reinstall (pipx --force .) + restart watchdog + health-check
 	./update.sh

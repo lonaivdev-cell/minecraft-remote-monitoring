@@ -14,7 +14,7 @@ venv/
 
 # makepkg artifacts
 pkg/
-src/mcctl-*/
+src/lulism-*/
 *.pkg.tar.zst
 *.log.makepkg
 

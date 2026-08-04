@@ -1,12 +1,15 @@
 # Maintainer: CarborioLand <lorenzods.ls1@gmail.com>
 # Local/dev PKGBUILD: build straight from this checkout with `makepkg -si`.
-pkgname=mcctl
-pkgver=0.5.0
+pkgname=lulism
+pkgver=1.1.2
 pkgrel=1
-pkgdesc="Remote control & monitoring for a modded Minecraft server over SSH (tmux + ServerStarterJar launch model)"
+pkgdesc="Legit Ultimate Linux Server Monitor — remote control & monitoring for game servers and hosts over SSH"
 arch=('any')
 url="https://github.com/lonaivdev-cell/minecraft-remote-monitoring"
 license=('MIT')
+provides=('mcctl')
+replaces=('mcctl')
+conflicts=('mcctl')
 depends=('python' 'python-rich' 'openssh' 'rsync')
 makedepends=('python-build' 'python-installer' 'python-wheel' 'python-setuptools')
 checkdepends=('python-pytest' 'tmux')
@@ -14,11 +17,11 @@ optdepends=(
     'libnotify: desktop notifications from the watchdog'
     'zstd: local verification of pulled backup archives'
     'tmux: integration tests / local transport mode'
-    'python-gobject: GTK desktop app (mcctl-gui)'
-    'python-anthropic: AI analysis & chat via Claude (mcctl ai; or use a local ollama instead)'
+    'python-gobject: GTK desktop app (lulism-gui)'
+    'python-anthropic: AI analysis & chat via Claude (lulism ai; or use a local ollama instead)'
     'ollama: local LLM backend for AI analysis & chat ([llm].provider = "ollama")'
-    'gtk4: GTK desktop app (mcctl-gui)'
-    'libadwaita: GTK desktop app (mcctl-gui)'
+    'gtk4: GTK desktop app (lulism-gui)'
+    'libadwaita: GTK desktop app (lulism-gui)'
 )
 
 build() {
@@ -34,26 +37,26 @@ check() {
 package() {
     cd "$startdir"
     python -m installer --destdir="$pkgdir" "$srcdir"/dist/*.whl
-    install -Dm644 src/mcctl/units/mcctl-watchdog.service \
-        "$pkgdir/usr/lib/systemd/user/mcctl-watchdog.service"
-    install -Dm644 src/mcctl/units/mcctl-autosave.service \
-        "$pkgdir/usr/lib/systemd/user/mcctl-autosave.service"
-    install -Dm644 src/mcctl/units/mcctl-autosave.timer \
-        "$pkgdir/usr/lib/systemd/user/mcctl-autosave.timer"
-    install -Dm644 src/mcctl/units/mcctl-backup.service \
-        "$pkgdir/usr/lib/systemd/user/mcctl-backup.service"
-    install -Dm644 src/mcctl/units/mcctl-backup.timer \
-        "$pkgdir/usr/lib/systemd/user/mcctl-backup.timer"
-    install -Dm644 src/mcctl/units/mcctl-metrics.service \
-        "$pkgdir/usr/lib/systemd/user/mcctl-metrics.service"
-    install -Dm644 src/mcctl/units/mcctl-metrics.timer \
-        "$pkgdir/usr/lib/systemd/user/mcctl-metrics.timer"
-    install -Dm644 completions/mcctl.fish \
-        "$pkgdir/usr/share/fish/vendor_completions.d/mcctl.fish"
-    install -Dm644 data/io.github.lonaivdev_cell.mcctl.desktop \
-        "$pkgdir/usr/share/applications/io.github.lonaivdev_cell.mcctl.desktop"
-    install -Dm644 data/icons/io.github.lonaivdev_cell.mcctl.svg \
-        "$pkgdir/usr/share/icons/hicolor/scalable/apps/io.github.lonaivdev_cell.mcctl.svg"
+    install -Dm644 src/lulism/units/lulism-watchdog.service \
+        "$pkgdir/usr/lib/systemd/user/lulism-watchdog.service"
+    install -Dm644 src/lulism/units/lulism-autosave.service \
+        "$pkgdir/usr/lib/systemd/user/lulism-autosave.service"
+    install -Dm644 src/lulism/units/lulism-autosave.timer \
+        "$pkgdir/usr/lib/systemd/user/lulism-autosave.timer"
+    install -Dm644 src/lulism/units/lulism-backup.service \
+        "$pkgdir/usr/lib/systemd/user/lulism-backup.service"
+    install -Dm644 src/lulism/units/lulism-backup.timer \
+        "$pkgdir/usr/lib/systemd/user/lulism-backup.timer"
+    install -Dm644 src/lulism/units/lulism-metrics.service \
+        "$pkgdir/usr/lib/systemd/user/lulism-metrics.service"
+    install -Dm644 src/lulism/units/lulism-metrics.timer \
+        "$pkgdir/usr/lib/systemd/user/lulism-metrics.timer"
+    install -Dm644 completions/lulism.fish \
+        "$pkgdir/usr/share/fish/vendor_completions.d/lulism.fish"
+    install -Dm644 data/io.github.lonaivdev_cell.lulism.desktop \
+        "$pkgdir/usr/share/applications/io.github.lonaivdev_cell.lulism.desktop"
+    install -Dm644 data/icons/io.github.lonaivdev_cell.lulism.svg \
+        "$pkgdir/usr/share/icons/hicolor/scalable/apps/io.github.lonaivdev_cell.lulism.svg"
     install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
     install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
 }
