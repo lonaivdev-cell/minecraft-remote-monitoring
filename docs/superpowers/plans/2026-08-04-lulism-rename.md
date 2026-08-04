@@ -916,6 +916,14 @@ Add a legacy-unit check inside `_ops_checks()`, right after the existing "legacy
     return util.state_dir() / "lulism.prom"
 ```
 
+`src/lulism/util.py:98` — same category, the rotating log file inside the now-`lulism` state dir:
+
+```python
+        state_dir() / "lulism.log", maxBytes=1_000_000, backupCount=5, encoding="utf-8"
+```
+
+Neither filename is migrated: `mcctl.log` and `mcctl.prom` are transient outputs that regenerate on the next run, and the Task 4 migration copies the whole state directory anyway, so the old files come across harmlessly and are simply superseded.
+
 Add a stale-scrape check to `_ops_checks()`, since `state_dir()` moving silently breaks a collector configured for the old path:
 
 ```python
