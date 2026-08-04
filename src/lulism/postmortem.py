@@ -1,7 +1,7 @@
-"""Post-mortem: a deterministic "what went wrong" built from evidence mcctl
+"""Post-mortem: a deterministic "what went wrong" built from evidence lulism
 already collects — no LLM, no API key, no guesswork.
 
-`mcctl postmortem` answers the question the 2026-06-11 incident made urgent:
+`lulism postmortem` answers the question the 2026-06-11 incident made urgent:
 after a crash / heal / crash-loop halt, point straight at the cause instead of
 making a human (or an AI) trawl a 1000-line crash report. It only *reads* —
 the newest crash report, the watchdog's event journal, intent/restart state,
@@ -55,8 +55,8 @@ _EXC_KINDS = (
      ("mod-version-mismatch",
       "two mods disagree about an API — one was built against a different version of the other")),
     (("OutOfMemoryError",),
-     ("out-of-memory", "the JVM ran out of heap — raise Xmx (`mcctl jvm heap`) or find the leak "
-      "(`mcctl purge`, `mcctl trace`)")),
+     ("out-of-memory", "the JVM ran out of heap — raise Xmx (`lulism jvm heap`) or find the leak "
+      "(`lulism purge`, `lulism trace`)")),
     (("StackOverflowError",),
      ("infinite-recursion", "two mods (often mixins) calling each other in a loop")),
 )
@@ -179,7 +179,7 @@ def _summarize(pm: Postmortem) -> None:
     if wd.get("halted"):
         pm.summary.append(f"watchdog HALTED: {wd.get('restarts_24h', 0)} self-heal restarts in "
                           "24h tripped the crash-loop breaker — it will stay down until "
-                          "`mcctl start` (which also clears the halt)")
+                          "`lulism start` (which also clears the halt)")
     elif wd.get("restarts_24h"):
         pm.summary.append(f"watchdog self-healed {wd['restarts_24h']} time(s) in the last 24h")
     halts = [e for e in pm.events if e.get("kind") == "crash-loop-halt"]
@@ -189,7 +189,7 @@ def _summarize(pm: Postmortem) -> None:
     if halts and not wd.get("halted"):
         pm.summary.append("a crash-loop halt occurred in this window (since cleared)")
 
-    pm.next_steps.append("deeper dive: `mcctl ai crash` (AI root-cause) or `mcctl logs crash`")
+    pm.next_steps.append("deeper dive: `lulism ai crash` (AI root-cause) or `lulism logs crash`")
     if pm.evidence:
         pm.next_steps.append(f"local evidence bundles: {pm.evidence[0]}")
 

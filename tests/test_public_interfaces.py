@@ -40,3 +40,20 @@ def test_prometheus_metric_names_are_frozen():
 
 def test_config_section_names_are_frozen():
     assert tuple(Config().to_dict()) == EXPECTED_CONFIG_SECTIONS
+
+
+def test_agent_hello_version_key_is_frozen():
+    """`mcctl_version` is a wire-contract key, not prose.
+
+    android/core/.../Models.kt:225 deserializes it as `mcctlVersion` and two
+    screens display it. android/ is frozen for this release, so renaming the key
+    would blank the version on every installed phone. The golden schema does not
+    cover it — agent.hello's payload is a response, not part of build_schema().
+    """
+    from lulism import agent
+
+    srv = agent.AgentServer.__new__(agent.AgentServer)
+    srv.caps = set()
+    hello = agent.METHODS["agent.hello"]["fn"](srv, {"capabilities": []})
+    assert "mcctl_version" in hello
+    assert "lulism_version" not in hello

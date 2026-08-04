@@ -1,4 +1,4 @@
-"""mcctl GUI launcher.
+"""lulism GUI launcher.
 
 Thin shim: verify GTK4 + libadwaita + PyGObject are importable and print an
 actionable hint when they are not (they are *optional* dependencies), then
@@ -21,7 +21,7 @@ def main(argv: list[str] | None = None) -> int:
         gi.require_version("Gtk", "4.0")
         gi.require_version("Adw", "1")
     except (ImportError, ValueError) as e:
-        print(f"mcctl-gui: {e}", file=sys.stderr)
+        print(f"lulism-gui: {e}", file=sys.stderr)
         print("The GUI needs GTK4, libadwaita and PyGObject (optional dependencies).",
               file=sys.stderr)
         print(f"On Arch:  {PACMAN_HINT}", file=sys.stderr)

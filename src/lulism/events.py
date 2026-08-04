@@ -1,10 +1,10 @@
 """Event journal: a durable, append-only record of watchdog decisions and alerts.
 
-The watchdog runs as its own systemd unit; the agent (`mcctl agent`) is a
+The watchdog runs as its own systemd unit; the agent (`lulism agent`) is a
 transient per-connection process. They must not be coupled by a live socket, so
 the IPC between them is this append-only JSONL journal: the watchdog *emits*
 events at the exact moments it already alerts, and any number of readers (the
-agent's `events.subscribe` stream, `mcctl events`, the GUI) tail it.
+agent's `events.subscribe` stream, `lulism events`, the GUI) tail it.
 
 Each line is one JSON object:
     {"ts": 1718107200.0, "kind": "restart", "detail": "…",

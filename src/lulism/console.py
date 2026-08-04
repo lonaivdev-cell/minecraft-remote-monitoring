@@ -2,7 +2,7 @@
 
 Preference order:
   1. RCON through an SSH tunnel — reliable request/response, no log scraping.
-     The password is read from the remote server.properties on demand; mcctl
+     The password is read from the remote server.properties on demand; lulism
      stores no secrets locally.
   2. tmux send-keys + log-offset capture — works even with RCON disabled,
      exactly like driving the console by hand.

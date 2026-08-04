@@ -4,10 +4,10 @@ The modpack's per-mod settings live in ``<server_dir>/config/`` as TOML (most),
 JSON/JSON5 (some), and ``.cfg``/``.properties`` files. This module enumerates
 them, best-effort-associates each file with the mod that owns it (by matching
 the file name / sub-directory against the mod ids read from the jars by
-:mod:`mcctl.mods`), and reads/writes individual files.
+:mod:`lulism.mods`), and reads/writes individual files.
 
 Writes go through the transport's atomic write (tmp + ``mv``) with a timestamped
-``.bak`` kept on the server — exactly like :mod:`mcctl.props`. TOML and JSON
+``.bak`` kept on the server — exactly like :mod:`lulism.props`. TOML and JSON
 files are *parsed locally first*, so a syntax error is rejected before it can
 brick the next launch.
 
@@ -18,7 +18,7 @@ configs and any mod that caches its values at construction only fully apply on
 the next restart, and ``/reload`` (see :func:`trigger_reload`) refreshes
 *datapack*-driven data (recipes/loot/tags), not mod TOMLs. There is no console
 command or add-on mod that forces a universal hot-reload — that is the loader's
-behaviour, not something mcctl can change. The editor is honest about this.
+behaviour, not something lulism can change. The editor is honest about this.
 
 Path safety: a client only ever supplies a path *relative to* ``config/``. Any
 absolute path or ``..`` traversal is rejected, and the resolved path must stay
@@ -213,7 +213,7 @@ def read_config(t: BaseTransport, cfg: Config, relpath: str) -> dict:
     if size > MAX_BYTES:
         raise ConfigEditError(
             f"{rel} is {util.human_bytes(size)} — over the {util.human_bytes(MAX_BYTES)} "
-            "edit cap; pull it with `mcctl sync` instead")
+            "edit cap; pull it with `lulism sync` instead")
     text = t.read_text(full, check=True)
     return {"path": rel, "text": text, "fmt": fmt_for(rel), "bytes": size}
 
@@ -243,7 +243,7 @@ def validate_text(relpath: str, text: str) -> str:
 def write_config(t: BaseTransport, cfg: Config, relpath: str, text: str) -> dict:
     """Validate then atomically overwrite an *existing* config file (.bak kept).
 
-    Refuses to create brand-new files: mcctl edits configs the modpack already
+    Refuses to create brand-new files: lulism edits configs the modpack already
     generated, it does not invent them.
     """
     rel = safe_rel(relpath)
@@ -254,7 +254,7 @@ def write_config(t: BaseTransport, cfg: Config, relpath: str, text: str) -> dict
                               f"(over the {util.human_bytes(MAX_BYTES)} cap)")
     full = f"{config_dir(cfg)}/{rel}"
     if not t.exists(full):
-        raise ConfigEditError(f"no such config file: {rel} (mcctl edits existing files only)")
+        raise ConfigEditError(f"no such config file: {rel} (lulism edits existing files only)")
     t.write_text(full, text, backup=True)
     log.info("wrote config/%s (%d bytes, .bak kept)", rel, nbytes)
     return {"path": rel, "fmt": fmt, "bytes": nbytes}

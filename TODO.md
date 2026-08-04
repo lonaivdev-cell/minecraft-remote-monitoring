@@ -2,7 +2,7 @@
 
 ## [P1] Android companion app — full development plan
 
-**Goal:** manage CarborioLand from a phone with feature parity with `mcctl`:
+**Goal:** manage CarborioLand from a phone with feature parity with `lulism`:
 status & dashboards, start/stop/restart, backups, spark TPS, alerts — without
 weakening the security model (no exposed ports, no stored passwords).
 
@@ -11,8 +11,8 @@ weakening the security model (no exposed ports, no stored passwords).
 | Option | Sketch | Verdict |
 |---|---|---|
 | A. Native SSH client app | Kotlin + sshj/Apache MINA reimplements all flows | ✗ duplicates every hard-won behavior; two codebases drift |
-| **B. Thin client ↔ `mcctl agent` (JSON-RPC over SSH stdio)** | app opens one SSH channel, runs `mcctl agent --json-rpc`, speaks a small RPC contract; ALL logic stays in this repo | ✅ **chosen** — one brain, two faces |
-| C. Termux + mcctl as-is | install Python mcctl inside Termux | stopgap only; useful for early dogfooding |
+| **B. Thin client ↔ `lulism agent` (JSON-RPC over SSH stdio)** | app opens one SSH channel, runs `lulism agent --json-rpc`, speaks a small RPC contract; ALL logic stays in this repo | ✅ **chosen** — one brain, two faces |
+| C. Termux + lulism as-is | install Python lulism inside Termux | stopgap only; useful for early dogfooding |
 
 Option B keeps the phone as a *renderer*: the tested Python core (watchdog
 semantics, backup safety, fish-proof remote scripting) remains the single
@@ -21,8 +21,8 @@ source of truth. The RPC surface is the existing `--json` payloads, formalized.
 ### Brain placement — decided 2026-06-11 (full record: [DESIGN-BRAIN.md](DESIGN-BRAIN.md))
 
 "One brain" also needs an answer to *where the brain lives*. The phone runs
-`mcctl agent` **on the box**, which reads/writes the box's
-`~/.local/state/mcctl/` — while the watchdog and `mcctl start/stop` write the
+`lulism agent` **on the box**, which reads/writes the box's
+`~/.local/state/lulism/` — while the watchdog and `lulism start/stop` write the
 desktop's. Two `watchdog.json`s and two `events.jsonl`s = split brain by
 construction the moment the app connects.
 
@@ -47,7 +47,7 @@ and route intent ops through it; `ALERT_SSH` ("box down") must be detected from
       by the box over a thin Python agent client (same NDJSON contract as the
       phone), and local-state writes are refused.
 - [ ] Box bootstrap per the DESIGN-BRAIN.md §6 runbook: pipx install,
-      `transport = "local"` config, `mcctl watchdog install`, enable units,
+      `transport = "local"` config, `lulism watchdog install`, enable units,
       `sudo loginctl enable-linger ubuntu`.
 - [ ] Cut over in stand-down order: desktop disarm + disable units FIRST, then
       arm the box brain; doctor green from both vantage points.
@@ -55,18 +55,18 @@ and route intent ops through it; `ALERT_SSH` ("box down") must be detected from
       `ALERT_SSH` — or explicitly accept "phone can't reach agent" as the signal.
 
 ### Phase 0 — API extraction (in this repo)  → **DONE in v0.5.0** (see [DESIGN-0.5.0.md](DESIGN-0.5.0.md))
-- [x] `mcctl agent` subcommand: long-lived JSON-RPC 2.0 loop on stdin/stdout
+- [x] `lulism agent` subcommand: long-lived JSON-RPC 2.0 loop on stdin/stdout
       (status, start/stop/restart/kill, save, cmd, tps/health/profile/purge,
       players.*, backup.*, logs.tail, props.*, jvm.*, mods.list, inspect,
       watchdog.*, metrics.history, events.*).
-- [x] Version-stamped schema (`mcctl agent --schema`) generated from the
+- [x] Version-stamped schema (`lulism agent --schema`) generated from the
       dataclasses; golden-file test (`tests/test_agent_schema.py`) so the
       contract can't drift silently without bumping `AGENT_PROTOCOL`.
 - [x] `events.subscribe` stream + shared `events.jsonl` journal; also surfaced
-      as `mcctl events [-f]`.
+      as `lulism events [-f]`.
 - [x] **ntfy / UnifiedPush push bridge** — `ntfy_*` sink in `util.notify()`;
       watchdog alerts reach a phone and the future app gets push for free.
-- [x] **Prometheus textfile exporter** (`mcctl metrics export` + `mcctl-metrics.timer`).
+- [x] **Prometheus textfile exporter** (`lulism metrics export` + `lulism-metrics.timer`).
 
 ### Phase 1 — Android MVP — **SHIPPED in [android/](android/)**
 - [x] Kotlin + Jetpack Compose; sshj with an **Ed25519 device key**, held in
@@ -94,17 +94,17 @@ and route intent ops through it; `ALERT_SSH` ("box down") must be detected from
       poller (~15 min) raises each message as a notification (own channels, runtime
       `POST_NOTIFICATIONS`, Settings UI). No Firebase; reuses the v0.5.0 `ntfy_*`
       sink. Live `events.subscribe` streaming was already done.
-- [ ] AI screen: wire `mcctl ai`-style analysis (currently a deliberate placeholder).
+- [ ] AI screen: wire `lulism ai`-style analysis (currently a deliberate placeholder).
 
 ### Phase 2.5 — recipe browser + command-craft  → **brain shipped**
-The "pick a recipe on my phone and have it crafted" ask. mcctl can't reach the
+The "pick a recipe on my phone and have it crafted" ask. lulism can't reach the
 client's crafting GUI (that's a client mod), so the *outcome* is reproduced over the
 console — browse recipes from the jars+datapacks, then consume inputs (`/clear`) and
 grant output (`/give`), loose-inventory-only so it stays survival-honest.
 - [x] `crafting.py`: jar+datapack recipe scan (pure parsers, tested), live-inventory
       plan, and a survival-safe craft engine (anti-dupe: never grants more than it
       removed). `[crafting]` config — player/source_player/receiver, one-stack cap.
-- [x] CLI: `mcctl recipes search|show`, `mcctl craft <id> [--count|--max] [--preview]`.
+- [x] CLI: `lulism recipes search|show`, `lulism craft <id> [--count|--max] [--preview]`.
 - [x] Agent contract: `recipes.search`, `recipes.get`, `craft.preview`, `craft.do`
       (actions + confirm gated), golden-schema regenerated.
 - [x] **Android screen (the renderer):** `CraftingScreen` — recipe picker (search →
@@ -114,13 +114,13 @@ grant output (`/give`), loose-inventory-only so it stays survival-honest.
       the `craft.preview` plan and rendered as the hold threshold.
 - [x] Tag display: `recipes.tag` resolves a `#tag` predicate to its concrete items
       (jar+datapack scan, pure-tested merge/recursion); the phone expands a tag
-      ingredient on demand, and `mcctl recipes tag <id>` renders the same on the CLI.
+      ingredient on demand, and `lulism recipes tag <id>` renders the same on the CLI.
 
 ### Phase 2.6 — EMI parity: icons, full recipe compat, interactive browser
 Make the phone's recipe browser feel like [EMI](https://emi.dev): real item
 **icons**, an item index searchable by name, **every** vanilla recipe category, and
 click-through (item → recipes that make it / uses). EMI is a *client* mod with the
-resource packs on hand; mcctl is server-side, so the brain reads the same files EMI
+resource packs on hand; lulism is server-side, so the brain reads the same files EMI
 reads (mod jars + `resourcepacks/`) and ships the item index + PNGs down the SSH
 channel for the app to cache and render offline. Decided 2026-06-20:
 **bundle all item PNGs to the phone**, cover **all EMI categories**, backend first.
@@ -141,7 +141,7 @@ channel for the app to cache and render offline. Decided 2026-06-20:
   - Agent contract (additive, no protocol bump): `items.manifest` (paged item
     index), `icons.fetch` (PNGs by texture id), `recipes.search` gained `offset`.
     Golden schema regenerated.
-  - CLI: `mcctl items list|search|icon`.
+  - CLI: `lulism items list|search|icon`.
 - [x] **Android `:core` bindings — PR #3:** typed `AgentClient` methods for the new
       contract — `itemsManifest` (paged), `iconsFetch` (base64→`ByteArray` for
       `BitmapFactory`), `assetsSync`, and `recipesSearch(offset=…)` for paging — plus
@@ -170,7 +170,7 @@ channel for the app to cache and render offline. Decided 2026-06-20:
       (additive, golden schema regenerated): `assets.py` gained `build_catalog` (pure —
       the distinct icon-texture set) and `hash_textures`/`catalog` (a cheap CRC-32 + size
       per texture, read from the jar central directory so a 15k-item pack scans fast), and
-      the agent exposes `assets.catalog` (read-only) + CLI `mcctl assets catalog`. On the
+      the agent exposes `assets.catalog` (read-only) + CLI `lulism assets catalog`. On the
       phone, `:core` gains `AssetCatalog`/`AssetSyncPlanner` (pure, tested — diff the server
       catalog against the local cache → fetch only what's missing/changed). `:app` gains an
       `AssetSyncManager` with a byte-accurate progress `StateFlow`: phases (index → catalog →
@@ -190,7 +190,7 @@ channel for the app to cache and render offline. Decided 2026-06-20:
       Version is auto-detected (logs/libraries probe) or set via `[server].mc_version`;
       the manifest→client-jar selection is pure + tested, the sha1-verified download runs
       server-side ("brain on the box"). Surfaces: `assets.sync` agent method (actions-gated)
-      + `mcctl assets status|sync`. Verified end-to-end (probe + resourcepack-over-vanilla
+      + `lulism assets status|sync`. Verified end-to-end (probe + resourcepack-over-vanilla
       override) through `LocalTransport`.
 - [ ] **Stretch:** favorites. *(craftable-only filter + recipe-tree cost breakdown —
       EMI's killer feature, total base materials + leftovers — shipped above.)*
@@ -214,15 +214,15 @@ channel for the app to cache and render offline. Decided 2026-06-20:
 ---
 
 ## Backlog (nice-to-have, unscheduled)
-- [x] `mcctl mods` — list server mods with versions; diff client vs server pack.
-      Listing shipped earlier; `mcctl mods --diff <client_mods_dir>` adds a pure,
+- [x] `lulism mods` — list server mods with versions; diff client vs server pack.
+      Listing shipped earlier; `lulism mods --diff <client_mods_dir>` adds a pure,
       tested `diff_mods` (server-only / client-only / version-mismatch, matched by
       mod id with a filename fallback) over a local client-pack scan (`scan_local_mods`,
       reusing the descriptor parsers). Client-side by nature (the box-side agent can't
       see the player's mods), so CLI-only — no agent/schema change.
 - [ ] The Hordes deployment helper (planned pack addition).
 - [x] Prometheus textfile exporter from `metrics.jsonl` for Grafana. *(scheduled: v0.5.0)*
-- [x] `mcctl backup restore --to <dir>` for side-by-side world inspection — a
+- [x] `lulism backup restore --to <dir>` for side-by-side world inspection — a
       `BackupManager.extract` that unpacks any snapshot (incl. `--full`) into a fresh
       dir, never touching the live world and working while the server runs (empty-dir
       guard + integrity check). Surfaces: CLI `backup restore --to`, agent `backup.extract`

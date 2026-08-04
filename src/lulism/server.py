@@ -6,7 +6,7 @@ Lessons from CarborioLand baked in:
   - start drives `bash start.sh` (ServerStarterJar), not the old run.sh;
   - tmux panes keep their corpse (remain-on-exit) so crash output survives
     for the watchdog to collect;
-  - mcctl start/stop records user intent so the watchdog never resurrects a
+  - lulism start/stop records user intent so the watchdog never resurrects a
     server that was stopped on purpose.
 """
 
@@ -297,7 +297,7 @@ class ServerControl:
                 )
         raise ServerError(
             f"server did not report ready within {s.start_timeout}s "
-            f"(last log line: {last_line or 'n/a'}) — check `mcctl logs`"
+            f"(last log line: {last_line or 'n/a'}) — check `lulism logs`"
         )
 
     # ---------------------------------------------------------------- stop

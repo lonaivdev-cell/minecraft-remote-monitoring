@@ -268,7 +268,7 @@ class BackupManager:
         if not self.t.exists(path):
             raise BackupError(f"no such backup on server: {name}")
         if self._server_running():
-            raise BackupError("server is running — `mcctl stop` first")
+            raise BackupError("server is running — `lulism stop` first")
         parsed = parse_name(b.prefix, name)
         if parsed and parsed[1]:
             raise BackupError("refusing to auto-restore a --full archive over the instance; "
@@ -295,7 +295,7 @@ class BackupManager:
         server is running — it's a read-only copy for diffing or recovery, and so
         accepts --full archives too. The archive is integrity-checked first, and
         the destination must be empty or absent: we never splat over existing data.
-        Returns the destination path (server-side; mcctl drives the box).
+        Returns the destination path (server-side; lulism drives the box).
         """
         b = self.cfg.backup
         if not dest:

@@ -1,7 +1,7 @@
 """Watchdog / intent state shared between CLI, server control and the watchdog daemon.
 
 The state file records *user intent* (`desired`: should the server be up?) separately
-from the watchdog *arm switch*. `mcctl stop` sets desired=down, which is what stops the
+from the watchdog *arm switch*. `lulism stop` sets desired=down, which is what stops the
 watchdog from resurrecting a server you took down on purpose — the migration foot-gun
 called out in the CarborioLand notes.
 """
@@ -15,7 +15,7 @@ from . import util
 
 DEFAULT_STATE = {
     "armed": False,          # watchdog disarmed by default: arm explicitly after setup
-    "desired": "down",       # "up" | "down" — user intent, set by mcctl start/stop
+    "desired": "down",       # "up" | "down" — user intent, set by lulism start/stop
     "restarts": [],          # unix timestamps of watchdog-initiated restarts
     "halted": False,         # crash-loop breaker tripped; requires manual re-arm
     "last_alerts": {},       # alert-key -> unix ts (rate limiting)

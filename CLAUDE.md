@@ -1,10 +1,10 @@
 # CLAUDE.md — working notes for this repo
 
-`mcctl` is an Arch-Linux CLI/TUI + GTK desktop app + Android companion that fully
+`lulism` is an Arch-Linux CLI/TUI + GTK desktop app + Android companion that fully
 drive a remote modded Minecraft server over SSH (RCON through an SSH tunnel, with a
 tmux + log-offset fallback). The guiding principle is **one brain, many faces**: the
 tested Python core is the single source of truth, and every other surface (CLI, GTK
-GUI, `mcctl agent` JSON-RPC, the phone) just *renders* it. When adding a feature,
+GUI, `lulism agent` JSON-RPC, the phone) just *renders* it. When adding a feature,
 put the logic in a core module with pure, tested functions and expose it — never
 reimplement it per surface.
 
@@ -14,13 +14,13 @@ Full feature/architecture overview lives in **[README.md](README.md)**; the road
 ## Layout
 
 ```
-src/mcctl/        the Python core + every surface
+src/lulism/       the Python core + every surface
   cli.py          argparse tree (exit codes: 0 ok / 1 error / 2 usage / 3 unreachable)
   config.py       TOML config dataclasses, validation, template
   transport.py    SSH ControlMaster wrapper + LocalTransport (dev/tests)
   console.py      RCON-over-tunnel → tmux+log fallback
   server.py       status probe + start/stop/restart state machine
-  agent.py        `mcctl agent` JSON-RPC 2.0 server over stdio (the phone's contract)
+  agent.py        `lulism agent` JSON-RPC 2.0 server over stdio (the phone's contract)
   crafting.py     recipe browser (jar+datapack scan, all EMI categories) + command-craft engine
   assets.py       EMI-style item index: lang display names + model→icon resolution + icon PNG fetch
   gui_app.py      GTK4 + libadwaita desktop app (single SSH worker thread)
@@ -52,11 +52,11 @@ Android (run from `android/`):
 ## Conventions that bite if ignored
 
 - **The agent contract is frozen by a golden file.** Adding/removing an agent method or
-  changing a config dataclass changes `mcctl agent --schema`, so `tests/test_agent_schema.py`
+  changing a config dataclass changes `lulism agent --schema`, so `tests/test_agent_schema.py`
   fails until you regenerate the golden:
 
   ```bash
-  python -c "import json,sys; sys.path.insert(0,'src'); from mcctl import agent; \
+  python -c "import json,sys; sys.path.insert(0,'src'); from lulism import agent; \
     json.dump(agent.build_schema(), open('tests/golden/agent_schema_v1.json','w'), \
     indent=2, sort_keys=True); open('tests/golden/agent_schema_v1.json','a').write('\n')"
   ```
@@ -69,14 +69,14 @@ Android (run from `android/`):
 - **Remote text is untrusted.** Sanitize console/log output (`util.strip_mc_codes` /
   `sanitize_terminal`); validate any value (player names, item ids) before it reaches a
   console command. This pack's crash logs are known to carry prompt-injection text.
-- **mcctl is server-side.** It drives the server over RCON/console; it cannot reach a
+- **lulism is server-side.** It drives the server over RCON/console; it cannot reach a
   player's client GUI. Features like command-craft reproduce the *outcome* via
   `/clear`+`/give` (loose inventory only → can't dupe), not by touching the game UI.
-- **The version is gospel — bump it with the change.** `src/mcctl/__init__.py` `__version__`
+- **The version is gospel — bump it with the change.** `src/lulism/__init__.py` `__version__`
   is the **single source of truth** (`pyproject.toml` reads it dynamically via
   `[tool.setuptools.dynamic]`; the Android APK derives its `versionName`/`versionCode` from it
   in `release.yml`). Any PR with a user-facing change (CLI/agent/GUI/phone) **bumps
-  `__version__`** (semver) in the same PR, so `mcctl --version` is an honest freshness signal
+  `__version__`** (semver) in the same PR, so `lulism --version` is an honest freshness signal
   and merging to `main` auto-cuts a release. No bump → no release. The number must only ever go
   **up** (`versionCode = major*10000 + minor*100 + patch` must increase or Obtainium won't
   upgrade).
@@ -94,7 +94,7 @@ Three GitHub Actions workflows:
 ### Cutting an Android release (→ Obtainium)
 
 **You don't tag by hand — the version does it.** Bump `__version__` in
-`src/mcctl/__init__.py` as part of your PR (see the "version is gospel" convention above).
+`src/lulism/__init__.py` as part of your PR (see the "version is gospel" convention above).
 When that PR merges to `main`, `release.yml`:
 1. reads `__version__` and computes `tag = v<version>`,
    `versionCode = major*10000 + minor*100 + patch` (e.g. `1.1.2` → `versionCode 10102`),
@@ -120,26 +120,26 @@ Releases page and offers every new tag as an update.
   `KEYSTORE_BASE64`, `KEYSTORE_STORE_PASSWORD`, `KEYSTORE_KEY_ALIAS`, `KEYSTORE_KEY_PASSWORD`
   (setup steps are commented in `release.yml`).
 
-### Updating `mcctl` on the server
+### Updating `lulism` on the server
 
-The phone auto-updates via Obtainium, but the **server's `mcctl` is updated by hand** — and a
+The phone auto-updates via Obtainium, but the **server's `lulism` is updated by hand** — and a
 skew (newer phone, older agent) is what makes the agent answer `unknown method: …`. The quickest
 path is the bundled **`./update.sh`** (or `make update`): it pulls, reinstalls, restarts the
-watchdog onto the new code, and runs `mcctl doctor`/`mcctl status` with a before/after health
+watchdog onto the new code, and runs `lulism doctor`/`lulism status` with a before/after health
 panel — and it *verifies the install took* (the dropped-`.` trap below). By hand it's:
 
 ```bash
 cd /path/to/minecraft-remote-monitoring
 git pull
 pipx install --force .     # NOT `pipx upgrade`: it compares versions and no-ops; --force reinstalls
-mcctl --version           # confirm it now reports the version you pulled
+lulism --version           # confirm it now reports the version you pulled
 ```
 
 `pipx upgrade` is a trap with a local checkout: it copies the code into pipx's own venv and
 only reinstalls when the **version number** rises, so a same-version pull is a silent no-op.
 `pipx install --force .` reinstalls unconditionally. (An editable `make dev` install tracks the
 working tree live and needs no reinstall.) Because `__version__` is now bumped per change,
-`mcctl --version` is the freshness check — match it against the latest release tag.
+`lulism --version` is the freshness check — match it against the latest release tag.
 
 > The dev sandbox can't reach Google's Maven, so the **APK only builds in CI** — verify
 > Android changes by pushing and watching `android.yml`, not locally.

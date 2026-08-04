@@ -102,7 +102,7 @@ KNOWN_PROPS: dict[str, PropSpec] = {
     "server-port": PropSpec("int", "Game port", lo=1, hi=65535),
     "server-ip": PropSpec("str", "Bind address (keep 0.0.0.0 — IPv6 bind fix)"),
     "use-native-transport": PropSpec("bool", "Epoll transport (false on this box — IPv6 fix)"),
-    "enable-rcon": PropSpec("bool", "RCON console (mcctl's preferred channel)"),
+    "enable-rcon": PropSpec("bool", "RCON console (lulism's preferred channel)"),
     "rcon.port": PropSpec("int", "RCON port", lo=1, hi=65535),
     "rcon.password": PropSpec("str", "RCON password"),
     "broadcast-rcon-to-ops": PropSpec("bool", "Echo RCON commands to ops (keep false: noisy)"),

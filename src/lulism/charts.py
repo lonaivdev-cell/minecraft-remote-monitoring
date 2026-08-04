@@ -1,7 +1,7 @@
 """Tiny terminal charting: sparklines, vertical block charts, series summaries.
 
 Pure functions over lists of `float | None` (None = a gap / no sample). Shared by
-the `mcctl history` CLI view and the GTK history page's text fallback, and kept
+the `lulism history` CLI view and the GTK history page's text fallback, and kept
 dependency-free so it is trivially unit-tested.
 """
 

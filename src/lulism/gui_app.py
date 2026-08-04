@@ -1,6 +1,6 @@
-"""GTK4 + libadwaita desktop app: the `mcctl dash` feature set, native-looking.
+"""GTK4 + libadwaita desktop app: the `lulism dash` feature set, native-looking.
 
-Only imported by `mcctl.gui` after PyGObject availability is verified — keep
+Only imported by `lulism.gui` after PyGObject availability is verified — keep
 every `gi` touch in this module.
 
 Threading model: GTK owns the main loop; every remote (SSH) operation runs on
@@ -39,7 +39,7 @@ from .transport import BaseTransport, TransportError, make_transport  # noqa: E4
 
 log = util.get_logger("gui")
 
-APP_ID = "io.github.lonaivdev_cell.mcctl"
+APP_ID = "io.github.lonaivdev_cell.lulism"
 FAST_TICK = 5    # seconds: cheap status probe (+ log tail when visible)
 SLOW_TICK = 20   # seconds: full status (spark TPS, players, heap)
 LOG_LINES = 200          # initial backlog shown when the live log view opens
@@ -115,7 +115,7 @@ class Worker(threading.Thread):
     """Single background thread that serializes all remote operations."""
 
     def __init__(self):
-        super().__init__(daemon=True, name="mcctl-gui-worker")
+        super().__init__(daemon=True, name="lulism-gui-worker")
         self._q: queue.Queue = queue.Queue()
         self.start()
 
@@ -139,7 +139,7 @@ class Worker(threading.Thread):
 
 class Window(Adw.ApplicationWindow):
     def __init__(self, app: McctlApp):
-        super().__init__(application=app, title="mcctl")
+        super().__init__(application=app, title="lulism")
         self.set_default_size(1120, 760)
         self.remote: Remote = app.remote
         self.worker: Worker = app.worker
@@ -240,14 +240,14 @@ class Window(Adw.ApplicationWindow):
             self.stack.add_titled(builder(), name, title)
         self.stack.connect("notify::visible-child-name", lambda *_: self._refresh_aux())
 
-        header = Adw.HeaderBar(title_widget=Adw.WindowTitle(title="mcctl"))
+        header = Adw.HeaderBar(title_widget=Adw.WindowTitle(title="lulism"))
         refresh_btn = Gtk.Button(icon_name="view-refresh-symbolic",
                                  tooltip_text="Refresh now (Ctrl+R)",
                                  action_name="win.refresh")
         header.pack_start(refresh_btn)
 
         menu = Gio.Menu()
-        menu.append("About mcctl", "app.about")
+        menu.append("About lulism", "app.about")
         menu.append("Quit", "app.quit")
         header.pack_end(Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu,
                                        tooltip_text="Main menu"))
@@ -395,7 +395,7 @@ class Window(Adw.ApplicationWindow):
         box.append(self.backups_group)
         note = Gtk.Label(
             label="Snapshots are consistent while live (save-off → flush → tar → verify → save-on)\n"
-                  "and rotated GFS-style. Restore stays CLI-only: mcctl backup restore NAME.",
+                  "and rotated GFS-style. Restore stays CLI-only: lulism backup restore NAME.",
             halign=Gtk.Align.START, justify=Gtk.Justification.LEFT)
         note.add_css_class("dim-label")
         note.add_css_class("caption")
@@ -450,7 +450,7 @@ class Window(Adw.ApplicationWindow):
 
         search = Adw.PreferencesGroup(
             title="Crafting",
-            description="Pick a recipe and have it crafted for you. mcctl can't reach your "
+            description="Pick a recipe and have it crafted for you. lulism can't reach your "
                         "in-game crafting grid, so it reproduces the result over the console: it "
                         "reads your inventory, consumes the inputs and gives you the output — only "
                         "ever from loose (accessible) inventory, so it can't dupe. Works at a "
@@ -578,7 +578,7 @@ class Window(Adw.ApplicationWindow):
         refresh.connect("clicked", lambda *_: self._refresh_history())
         bar.append(refresh)
         self.history_status = Gtk.Label(
-            label="Recorded by the watchdog, `mcctl watch`, this app, and `mcctl dash`.",
+            label="Recorded by the watchdog, `lulism watch`, this app, and `lulism dash`.",
             halign=Gtk.Align.START, hexpand=True, xalign=0.0, ellipsize=3)  # 3 = END
         self.history_status.add_css_class("dim-label")
         self.history_status.add_css_class("caption")
@@ -750,19 +750,19 @@ class Window(Adw.ApplicationWindow):
     # ------------------------------------------------------------ settings
 
     def _build_settings(self) -> Gtk.Widget:
-        """A full editor for ~/.config/mcctl/config.toml — every section, so you
+        """A full editor for ~/.config/lulism/config.toml — every section, so you
         never have to hand-edit the file. Connection changes reconnect in place."""
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18,
                       margin_top=24, margin_bottom=24, margin_start=12, margin_end=12)
         intro = Gtk.Label(
-            label="Edit every mcctl setting here — saved straight to your config.toml.",
+            label="Edit every lulism setting here — saved straight to your config.toml.",
             halign=Gtk.Align.START, wrap=True)
         intro.add_css_class("dim-label")
         box.append(intro)
 
         g = Adw.PreferencesGroup(
             title="SSH connection",
-            description="How mcctl reaches the server. Saving these reconnects in place.")
+            description="How lulism reaches the server. Saving these reconnects in place.")
         self._add_field(g, "server", "host", "text", "Host / IP")
         self._add_field(g, "server", "ssh_port", "int", "SSH port")
         self._add_field(g, "server", "user", "text", "User")
@@ -1277,7 +1277,7 @@ class Window(Adw.ApplicationWindow):
                 self._log_queue.put("— reconnecting to the log —")
                 stop.wait(3.0)                       # server restart / blip: back off, then retrace
 
-        self._log_thread = threading.Thread(target=follow, daemon=True, name="mcctl-log-follow")
+        self._log_thread = threading.Thread(target=follow, daemon=True, name="lulism-log-follow")
         self._log_thread.start()
         self._log_drain_id = GLib.timeout_add(200, self._drain_log_queue, epoch)
 
@@ -1852,7 +1852,7 @@ class Window(Adw.ApplicationWindow):
                 up, names = False, []
             GLib.idle_add(self._on_ollama_probe, up, names)
 
-        threading.Thread(target=run, daemon=True, name="mcctl-ollama-probe").start()
+        threading.Thread(target=run, daemon=True, name="lulism-ollama-probe").start()
 
     def _on_ollama_probe(self, up: bool, names: list[str]) -> bool:
         self._ollama_up = up
@@ -2052,7 +2052,7 @@ class Window(Adw.ApplicationWindow):
             for area in self._history_areas.values():
                 area.queue_draw()
             self.history_status.set_label(
-                "no samples yet — run `mcctl watch` or the watchdog"
+                "no samples yet — run `lulism watch` or the watchdog"
                 if total == 0 else
                 f"{total} samples · all metrics shown · reloads while this tab is open")
 
@@ -2915,7 +2915,7 @@ class McctlApp(Adw.Application):
 
     def _on_about(self, *_):
         about = Adw.AboutDialog(
-            application_name="mcctl",
+            application_name="lulism",
             application_icon=APP_ID,
             version=__version__,
             developer_name="CarborioLand",
@@ -2927,9 +2927,9 @@ class McctlApp(Adw.Application):
 
 
 def run(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="mcctl-gui",
-                                 description="GTK4/libadwaita desktop app for mcctl.")
-    ap.add_argument("--config", help="config file (default: ~/.config/mcctl/config.toml)")
+    ap = argparse.ArgumentParser(prog="lulism-gui",
+                                 description="GTK4/libadwaita desktop app for lulism.")
+    ap.add_argument("--config", help="config file (default: ~/.config/lulism/config.toml)")
     ap.add_argument("-v", "--verbose", action="count", default=0,
                     help="-v info, -vv debug on stderr")
     args = ap.parse_args(argv)

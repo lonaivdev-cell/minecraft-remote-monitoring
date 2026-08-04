@@ -90,7 +90,7 @@ def verdict_for(freed_pct: float) -> str:
         return ("partial reclaim — watch the trend; could be genuine load "
                 "(chunks/entities) or a slow leak")
     return ("little reclaimed — the retained set is real: heavily loaded chunks/mods "
-            "or a leak; check `mcctl health` and consider a heap dump")
+            "or a leak; check `lulism health` and consider a heap dump")
 
 
 def purge(t: BaseTransport, cfg: Config, pid: int) -> PurgeReport:

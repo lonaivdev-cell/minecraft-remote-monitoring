@@ -1,7 +1,7 @@
 """Recipe browser + survival-safe "command-craft" for the phone/CLI.
 
 The dream this adapts: pick a recipe on your phone and have it crafted for you,
-optionally maxed out to one stack. mcctl is a *server-ops* tool — it talks to the
+optionally maxed out to one stack. lulism is a *server-ops* tool — it talks to the
 server over RCON/console, it does **not** run inside your game client, so it can't
 reach into your open crafting GUI and pre-fill the grid (that's a client mod's job,
 e.g. JEI/REI's recipe-transfer button). What it *can* do, and what this module does,
@@ -418,7 +418,7 @@ def search_recipes(t: BaseTransport, cfg: Config, query: str = "",
     r = t.run(script, timeout=120)
     if "==NOPY" in r.out:
         raise CraftError("the server has no python3 — recipe extraction needs it "
-                         "(same requirement as `mcctl mods`)")
+                         "(same requirement as `lulism mods`)")
     return parse_recipe_listing(util.sanitize_terminal(r.out))
 
 
@@ -600,7 +600,7 @@ def load_tag_map(t: BaseTransport, cfg: Config) -> dict[str, list[str]]:
     r = t.run(script, timeout=120)
     if "==NOPY" in r.out:
         raise CraftError("the server has no python3 — tag resolution needs it "
-                         "(same requirement as `mcctl mods`)")
+                         "(same requirement as `lulism mods`)")
     return parse_tag_listing(util.sanitize_terminal(r.out))
 
 

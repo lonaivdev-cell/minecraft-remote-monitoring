@@ -1,7 +1,7 @@
-"""mcctl command-line interface.
+"""lulism command-line interface.
 
 # TODO(P1): Android companion app with feature parity — full development plan
-#           lives in TODO.md at the repo root. `mcctl status --json` and the
+#           lives in TODO.md at the repo root. `lulism status --json` and the
 #           other --json outputs are the seed of its transport contract.
 """
 
@@ -37,7 +37,7 @@ log = util.get_logger("cli")
 
 
 class Ctx:
-    """Lazy holder so `mcctl --help` etc. never touch the network."""
+    """Lazy holder so `lulism --help` etc. never touch the network."""
 
     def __init__(self, args: argparse.Namespace):
         self.args = args
@@ -88,13 +88,13 @@ def cmd_init(ctx: Ctx) -> int:
     path = write_template(a.config, force=a.force, host=a.host, user=a.user,
                           server_dir=a.server_dir, tmux_session=a.tmux_session)
     rc.print(f"[green]wrote[/green] {path}")
-    rc.print("next: [bold]mcctl doctor[/bold] to verify the stack end-to-end")
+    rc.print("next: [bold]lulism doctor[/bold] to verify the stack end-to-end")
     return 0
 
 
 def cmd_doctor(ctx: Ctx) -> int:
     results = run_doctor(ctx.cfg, ctx.t, fix=ctx.args.fix)
-    table = Table(title="mcctl doctor", show_lines=False)
+    table = Table(title="lulism doctor", show_lines=False)
     table.add_column("check", style="bold")
     table.add_column("status")
     table.add_column("detail")
@@ -197,9 +197,9 @@ def cmd_start(ctx: Ctx) -> int:
             ctx.ctl.start(wait=not ctx.args.no_wait,
                           progress=lambda line: status.update(f"[cyan]boot:[/cyan] [dim]{line}[/dim]"))
     if ctx.args.no_wait:
-        rc.print("[yellow]launch dispatched — not waiting for ready (check `mcctl status`)[/yellow]")
+        rc.print("[yellow]launch dispatched — not waiting for ready (check `lulism status`)[/yellow]")
     else:
-        rc.print("[green]server is up[/green] — `mcctl dash` to watch it")
+        rc.print("[green]server is up[/green] — `lulism dash` to watch it")
     return 0
 
 
@@ -288,7 +288,7 @@ def cmd_health(ctx: Ctx) -> int:
     if rep.disk_used:
         rc.print(f"disk:   {util.human_bytes(rep.disk_used)} / {util.human_bytes(rep.disk_total)}")
     if not (rep.tps or rep.memory_used):
-        rc.print("[yellow]spark health returned nothing parseable — see `mcctl cmd spark health`[/yellow]")
+        rc.print("[yellow]spark health returned nothing parseable — see `lulism cmd spark health`[/yellow]")
     return 0
 
 
@@ -322,7 +322,7 @@ def cmd_stats(ctx: Ctx) -> int:
         print(json.dumps(samples, indent=2))
         return 0
     if not samples:
-        rc.print("[yellow]no samples yet — run the watchdog or `mcctl dash` to collect[/yellow]")
+        rc.print("[yellow]no samples yet — run the watchdog or `lulism dash` to collect[/yellow]")
         return 0
     t = Table(title=f"last {len(samples)} samples")
     for col in ("time", "tps", "mspt", "players", "heap", "host mem", "load1"):
@@ -393,7 +393,7 @@ def cmd_backup(ctx: Ctx) -> int:
                     kept, dropped = mgr.prune(dry=a.dry_run)
         except BackupError as e:
             if a.notify:
-                util.notify("mcctl: backup FAILED", str(e),
+                util.notify("lulism: backup FAILED", str(e),
                             desktop=ctx.cfg.watchdog.notify_desktop,
                             webhook_url=ctx.cfg.watchdog.webhook_url, urgency="critical")
             raise
@@ -416,7 +416,7 @@ def cmd_backup(ctx: Ctx) -> int:
                 # the local backup already succeeded — off-site is best-effort, never fatal
                 rc.print(f"[yellow]off-site mirror failed:[/yellow] {e}")
                 if a.notify:
-                    util.notify("mcctl: off-site backup FAILED", str(e),
+                    util.notify("lulism: off-site backup FAILED", str(e),
                                 desktop=ctx.cfg.watchdog.notify_desktop,
                                 webhook_url=ctx.cfg.watchdog.webhook_url, urgency="critical")
         return 0
@@ -428,7 +428,7 @@ def cmd_backup(ctx: Ctx) -> int:
                                "full": e.full} for e in entries], indent=2))
             return 0
         if not entries:
-            rc.print("[yellow]no backups yet — `mcctl backup` makes one[/yellow]")
+            rc.print("[yellow]no backups yet — `lulism backup` makes one[/yellow]")
             return 0
         t = Table(title=f"backups in {ctx.cfg.backup.remote_dir}")
         t.add_column("name")
@@ -474,7 +474,7 @@ def cmd_backup(ctx: Ctx) -> int:
         with util.OpsLock():
             aside = mgr.restore(a.name)
         rc.print(f"[green]restored {a.name}[/green] — previous world kept at {aside}")
-        rc.print("start when ready: [bold]mcctl start[/bold]")
+        rc.print("start when ready: [bold]lulism start[/bold]")
         return 0
 
     if sub == "offsite":
@@ -672,7 +672,7 @@ def cmd_rcon(ctx: Ctx) -> int:
         ok = ctx.console.rcon_available()
         rc.print(f"tunnel + auth: {'[green]working[/green]' if ok else '[red]failing[/red]'}")
         return 0 if ok else 1
-    rc.print("hint: [bold]mcctl doctor --fix[/bold] enables RCON with a generated password")
+    rc.print("hint: [bold]lulism doctor --fix[/bold] enables RCON with a generated password")
     return 1
 
 
@@ -879,7 +879,7 @@ def cmd_assets(ctx: Ctx) -> int:
         if ver:
             rc.print(f"vanilla jar: {jar}")
             rc.print("cached: " + ("[green]yes[/green]" if cached
-                                   else "[yellow]no — run `mcctl assets sync`[/yellow]"))
+                                   else "[yellow]no — run `lulism assets sync`[/yellow]"))
         return 0 if ver else 1
     if sub == "sync":
         rc.print("[dim]fetching the vanilla client jar on the server (one-time, ~25 MB)…[/dim]")
@@ -890,7 +890,7 @@ def cmd_assets(ctx: Ctx) -> int:
         if res["ok"]:
             verb = "already cached" if res["status"] == "present" else "downloaded"
             rc.print(f"[green]{verb}[/green] vanilla {res['version']} → {res['jar']}")
-            rc.print("[dim]vanilla items now resolve in `mcctl items` and the recipe browser.[/dim]")
+            rc.print("[dim]vanilla items now resolve in `lulism items` and the recipe browser.[/dim]")
             return 0
         rc.print(f"[red]sync failed[/red] ({res['status']}) for {res['version']}")
         return 1
@@ -1185,7 +1185,7 @@ def cmd_ai(ctx: Ctx) -> int:
         parts.append(llm.envelope(f"inspect-{section}", rep.text))
     elif kind == "ask":
         if not question:
-            rc.print("[red]usage: mcctl ai ask QUESTION...[/red]")
+            rc.print("[red]usage: lulism ai ask QUESTION...[/red]")
             return 2
         parts.append(llm.status_envelope(ctx.ctl))
         parts.append(llm.envelope("latest.log tail", logs.tail(ctx.t, ctx.cfg, 150)))
@@ -1228,7 +1228,7 @@ def cmd_history(ctx: Ctx) -> int:
     from . import charts
     samples = metrics.read_samples(ctx.args.n)
     if not samples:
-        rc.print("[yellow]no samples yet — run `mcctl watch`, `mcctl dash`, or the "
+        rc.print("[yellow]no samples yet — run `lulism watch`, `lulism dash`, or the "
                  "watchdog to collect history[/yellow]")
         return 0
     span = ""
@@ -1349,7 +1349,7 @@ def cmd_metrics(ctx: Ctx) -> int:
 
 def cmd_notify_test(ctx: Ctx) -> int:
     w = ctx.cfg.watchdog
-    util.notify("mcctl: test alert", "If you can read this, mcctl alerting works.",
+    util.notify("lulism: test alert", "If you can read this, lulism alerting works.",
                 desktop=w.notify_desktop, webhook_url=w.webhook_url,
                 ntfy_url=w.ntfy_url, ntfy_topic=w.ntfy_topic, ntfy_token=w.ntfy_token,
                 urgency="normal")
@@ -1368,23 +1368,23 @@ def cmd_notify_test(ctx: Ctx) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     # shared by the main parser and every (nested) subparser, so global flags
-    # work in any position: `mcctl --config X status` == `mcctl status --config X`
+    # work in any position: `lulism --config X status` == `lulism status --config X`
     # SUPPRESS so a subparser never clobbers a value parsed by the main parser
-    # (`mcctl --config X status` used to silently lose X); main() fills the
+    # (`lulism --config X status` used to silently lose X); main() fills the
     # defaults in when the flag was never given at all.
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--config", default=argparse.SUPPRESS,
-                        help="config file (default: ~/.config/mcctl/config.toml)")
+                        help="config file (default: ~/.config/lulism/config.toml)")
     common.add_argument("-v", "--verbose", action="count", default=argparse.SUPPRESS,
                         help="-v info, -vv debug on stderr")
 
     p = argparse.ArgumentParser(
         prog="lulism",
         description="Remote control & monitoring for a modded Minecraft server over SSH.",
-        epilog="start here: mcctl init  ->  mcctl doctor  ->  mcctl start  ->  mcctl dash",
+        epilog="start here: lulism init  ->  lulism doctor  ->  lulism start  ->  lulism dash",
         parents=[common],
     )
-    p.add_argument("--version", action="version", version=f"mcctl {__version__}")
+    p.add_argument("--version", action="version", version=f"lulism {__version__}")
     subaction = p.add_subparsers(dest="cmd", metavar="COMMAND")
 
     class _Sub:
@@ -1481,7 +1481,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("-n", "--lines", type=int, default=50)
     sp.add_argument("-f", "--follow", action="store_true")
     sp.add_argument("crash", nargs="?", choices=["crash"],
-                    help="crash report mode: `mcctl logs crash [--list|--get NAME]`")
+                    help="crash report mode: `lulism logs crash [--list|--get NAME]`")
     sp.add_argument("--list", action="store_true", help="list crash reports")
     sp.add_argument("--get", metavar="NAME", help="print a specific crash report")
     sp.set_defaults(func=cmd_logs)
@@ -1718,7 +1718,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("dash", help="live TUI dashboard")
     sp.set_defaults(func=cmd_dash)
 
-    sp = sub.add_parser("gui", help="GTK4/libadwaita desktop app (also installed as mcctl-gui)")
+    sp = sub.add_parser("gui", help="GTK4/libadwaita desktop app (also installed as lulism-gui)")
     sp.set_defaults(func=cmd_gui)
 
     sp = sub.add_parser("agent", help="JSON-RPC 2.0 server over stdio (for the phone app / scripts)")

@@ -120,7 +120,7 @@ Read the trace like this:
   • Eden climbing then snapping back to ~0% with a young GC = normal allocation.
   • Old % drifting up over time and never falling = retained set growing (more
     loaded chunks, more entities — or a leak). A full GC that frees little of it
-    means the memory is genuinely live: see `mcctl purge` and `mcctl health`.
+    means the memory is genuinely live: see `lulism purge` and `lulism health`.
   • Frequent or long full-GC pauses are what players feel as lag spikes; pair
-    this with `mcctl tps` to correlate pauses with MSPT.
+    this with `lulism tps` to correlate pauses with MSPT.
 """

@@ -80,7 +80,7 @@ def _pump(p: subprocess.Popen, stop: threading.Event | None) -> Iterator[str]:
                 if stop.is_set():
                     _kill_group(p, signal.SIGTERM)
                     return
-        threading.Thread(target=_watch, daemon=True, name="mcctl-stream-cancel").start()
+        threading.Thread(target=_watch, daemon=True, name="lulism-stream-cancel").start()
     try:
         for line in p.stdout:
             yield line.decode(errors="replace").rstrip("\n")

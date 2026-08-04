@@ -31,7 +31,7 @@ def test_envelope_wraps_and_elides():
     out = llm.envelope("latest.log", "x" * 200, limit=90)
     assert out.startswith('<data kind="latest.log">')
     assert out.endswith("</data>")
-    assert "elided by mcctl" in out
+    assert "elided by lulism" in out
     small = llm.envelope("k", "short")
     assert "elided" not in small
 

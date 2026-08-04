@@ -1,6 +1,6 @@
-"""`mcctl agent` — a JSON-RPC 2.0 server over SSH stdio.
+"""`lulism agent` — a JSON-RPC 2.0 server over SSH stdio.
 
-The phone (and any future client) opens one SSH channel, runs `mcctl agent`, and
+The phone (and any future client) opens one SSH channel, runs `lulism agent`, and
 speaks newline-delimited JSON-RPC. Every method reuses the same tested service
 objects the CLI calls (`Ctx → ServerControl / BackupManager / Console / …`) —
 nothing is reimplemented, only exposed. One brain, two faces.
@@ -46,13 +46,13 @@ log = util.get_logger("agent")
 # never drift silently. Within a major version, changes must be additive.
 AGENT_PROTOCOL = 1
 
-# JSON-RPC reserved codes + mcctl app-level codes.
+# JSON-RPC reserved codes + lulism app-level codes.
 PARSE_ERROR = -32700
 INVALID_REQUEST = -32600
 METHOD_NOT_FOUND = -32601
 INVALID_PARAMS = -32602
 INTERNAL_ERROR = -32603
-APP_ERROR = -32000          # error.data.exit_code carries mcctl's exit vocabulary
+APP_ERROR = -32000          # error.data.exit_code carries lulism's exit vocabulary
 CAP_REQUIRED = -32004
 CONFIRM_REQUIRED = -32005
 
@@ -817,5 +817,5 @@ def build_schema() -> dict:
 
 
 def serve(ctx) -> int:
-    """Entry point used by `mcctl agent`."""
+    """Entry point used by `lulism agent`."""
     return AgentServer(ctx).serve()

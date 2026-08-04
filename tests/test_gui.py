@@ -54,4 +54,4 @@ def test_gui_app_importable_when_gtk_present():
         from lulism import gui_app
     except (ImportError, ValueError) as e:  # no/broken PyGObject, or GTK4/Adw typelibs missing
         pytest.skip(f"GTK4/libadwaita not available: {e}")
-    assert gui_app.APP_ID == "io.github.lonaivdev_cell.mcctl"
+    assert gui_app.APP_ID == "io.github.lonaivdev_cell.lulism"

@@ -10,7 +10,7 @@ Design rules:
     modpack's crash logs are KNOWN to carry prompt-injection text;
   - no secrets leave the machine: rcon.password values and secret-looking
     env assignments are masked before the payload is built;
-  - the API key stays in the environment (cfg.llm.api_key_env); mcctl never
+  - the API key stays in the environment (cfg.llm.api_key_env); lulism never
     stores it.
 """
 
@@ -28,7 +28,7 @@ log = util.get_logger("llm")
 
 INSTALL_HINT = (
     "the `anthropic` package is not installed.\n"
-    "  pacman:  sudo pacman -S python-anthropic   (or: pipx inject mcctl anthropic)\n"
+    "  pacman:  sudo pacman -S python-anthropic   (or: pipx inject lulism anthropic)\n"
     "  pip:     pip install anthropic\n"
     "  or set [llm].provider = \"ollama\" to use a local model instead"
 )
@@ -36,7 +36,7 @@ INSTALL_HINT = (
 OLLAMA_TIMEOUT = 600  # seconds; local models can be slow on first load
 
 SYSTEM_PROMPT = """\
-You are the analysis engine inside mcctl, a remote-control tool for a single-owner \
+You are the analysis engine inside lulism, a remote-control tool for a single-owner \
 modded Minecraft server (Medieval MC / NeoForge 1.21.1, ServerPackCreator launch, \
 ARM64 Oracle Cloud VM, tmux + SSH). The operator owns the whole stack and uses this \
 tool to learn how operating systems, the JVM, and mods actually work.
@@ -53,7 +53,7 @@ posture (RCON stays SSH-tunneled, no new open ports).
 
 Style:
 - Lead with a one-or-two-sentence verdict, then the evidence (quote the exact log \
-lines/threads/mods), then concrete next steps as `mcctl` commands where applicable.
+lines/threads/mods), then concrete next steps as `lulism` commands where applicable.
 - The operator learns best from clear structure and plain language: when you use an \
 OS/JVM concept (GC, epoll, RSS, tick loop...), add a one-line explanation of what it \
 is. Be concrete and honest about uncertainty.
@@ -103,7 +103,7 @@ def envelope(kind: str, text: str, *, limit: int = 120_000) -> str:
     text = text.replace("</data", "<\\/data")
     if len(text) > limit:
         head, tail = text[: limit // 3], text[-2 * limit // 3:]
-        text = f"{head}\n[... {len(text) - limit:,} bytes elided by mcctl ...]\n{tail}"
+        text = f"{head}\n[... {len(text) - limit:,} bytes elided by lulism ...]\n{tail}"
     return f'<data kind="{kind}">\n{text}\n</data>'
 
 
@@ -124,7 +124,7 @@ def available(cfg: Config | None = None) -> tuple[bool, str]:
     """(usable, reason-if-not) — checked before showing the AI/Chat pages.
 
     Anthropic needs the optional SDK importable; ollama has no client-side
-    dependency (mcctl speaks its HTTP API directly), so reachability is only
+    dependency (lulism speaks its HTTP API directly), so reachability is only
     discovered at request time — keep this cheap and non-blocking."""
     if cfg is not None and cfg.llm.provider == "ollama":
         return True, ""
@@ -160,7 +160,7 @@ def list_ollama_models(cfg: Config, *, timeout: float = 10.0) -> list[str]:
     import urllib.error
     import urllib.request
     url = _ollama_endpoint(cfg.llm.ollama_url, "/api/tags")
-    req = urllib.request.Request(url, headers={"User-Agent": "mcctl"})
+    req = urllib.request.Request(url, headers={"User-Agent": "lulism"})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - local, user-configured
             data = json.loads(resp.read().decode("utf-8", "replace"))
@@ -262,7 +262,7 @@ class _OllamaBackend:
             "options": {"num_predict": llm.max_tokens},
         }).encode()
         req = urllib.request.Request(
-            url, data=body, headers={"Content-Type": "application/json", "User-Agent": "mcctl"})
+            url, data=body, headers={"Content-Type": "application/json", "User-Agent": "lulism"})
         chunks: list[str] = []
         try:
             with urllib.request.urlopen(req, timeout=OLLAMA_TIMEOUT) as resp:  # noqa: S310 - local, user-configured

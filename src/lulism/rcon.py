@@ -8,7 +8,7 @@ Minecraft fragments long replies (spark output!) into multiple 4096-byte
 response packets with the same request id; we read until the socket goes
 idle. Auth failure is signalled by request id == -1.
 
-mcctl never exposes RCON to the internet: the port stays loopback-firewalled
+lulism never exposes RCON to the internet: the port stays loopback-firewalled
 on the server and we reach it through an SSH -L tunnel.
 """
 

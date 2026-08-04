@@ -138,7 +138,7 @@ EXPLAIN: dict[str, str] = {
         "  GC.heap_info  G1 divides the heap into equal regions; 'used' vs 'total'\n"
         "                committed is your live-data vs reserved picture\n"
         "Key flags: MaxHeapSize (Xmx), G1HeapRegionSize, ParallelGCThreads,\n"
-        "ExplicitGCInvokesConcurrent (lets `mcctl purge` run a concurrent GC)."
+        "ExplicitGCInvokesConcurrent (lets `lulism purge` run a concurrent GC)."
     ),
     "host": (
         "The whole machine, from the kernel's perspective.\n"
@@ -160,7 +160,7 @@ SECTIONS = tuple(EXPLAIN)  # canonical order
 
 def _need_pid(pid: int | None) -> int:
     if not pid:
-        raise InspectError("server is not running — nothing to inspect (try `mcctl inspect host`)")
+        raise InspectError("server is not running — nothing to inspect (try `lulism inspect host`)")
     return int(pid)
 
 

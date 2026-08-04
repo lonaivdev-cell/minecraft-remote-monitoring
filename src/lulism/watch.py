@@ -1,9 +1,9 @@
-"""`mcctl watch` — a line-oriented live monitor.
+"""`lulism watch` — a line-oriented live monitor.
 
-Where `mcctl dash` takes over the screen, watch streams one compact status line
+Where `lulism dash` takes over the screen, watch streams one compact status line
 per interval to stdout: scrollable, greppable, and friendly to a terminal you're
 also reading code in. Every full sample is recorded to the metrics history, so a
-watch session doubles as a recorder for `mcctl history`.
+watch session doubles as a recorder for `lulism history`.
 """
 
 from __future__ import annotations

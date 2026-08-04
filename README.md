@@ -1,4 +1,4 @@
-# mcctl — Minecraft Remote Control & Monitoring
+# lulism — Minecraft Remote Control & Monitoring
 
 Arch Linux CLI/TUI that fully drives a remote modded Minecraft server over SSH.
 Built for the **CarborioLand** stack — Medieval MC MMC5 (NeoForge 1.21.1) on an
@@ -6,7 +6,7 @@ ARM64 OCI box, launched via ServerPackCreator's `start.sh` inside tmux — but
 everything is configurable.
 
 ```
-mcctl init  →  mcctl doctor  →  mcctl start  →  mcctl dash
+lulism init  →  lulism doctor  →  lulism start  →  lulism dash
 ```
 
 ## Design at a glance
@@ -25,39 +25,39 @@ mcctl init  →  mcctl doctor  →  mcctl start  →  mcctl dash
 
 | Command | What it does |
 |---|---|
-| `mcctl status [--json] [--fast]` | process/tmux/port/players/TPS/heap/host RAM/disk/backup age, one screen |
-| `mcctl start` / `stop` / `restart` | tmux + `start.sh` boot with readiness detection; graceful stop: player countdown → `save-all flush` → `stop` → SIGTERM → SIGKILL escalation |
-| `mcctl dash` | live TUI: TPS sparkline, heap/RAM gauges, log tail; keys for save/backup/purge/start/stop |
-| `mcctl gui` / `mcctl-gui` | native GTK4/libadwaita desktop app (sidebar, 19 pages): live status & actions, TPS/heap/players history charts, console, logs, players, backups, mods, a **mod-config browser/editor** (pick a mod → edit its `config/` files in place → save with live-reload + a one-tap restart), a **Crafting** page (search the pack's recipes → a craft dialog reads your live inventory and crafts it: **Craft** = tap, **Craft max** = the phone's hold-to-max, capped at one stack), OS/JVM inspector (learn mode), AI analysis, AI chat, doctor with safe fixes, validated server.properties editor, JVM settings, crash reports + evidence bundles, spark profiler, config sync, and a **Settings** editor for the whole config.toml (SSH key + flags, ollama model picker, every section incl. your crafting IGN/source) — no hand-editing required. Opening the app onto an already-running server auto-connects to its live tmux session instead of forcing a restart |
-| `mcctl watch` | line-oriented live monitor: one compact status line per interval (state/players/TPS/MSPT/heap/RAM/load), scrollable and greppable; records metric history as it runs |
-| `mcctl history [tps\|mspt\|heap\|players\|mem\|load\|all]` | terminal charts of recorded metric history with min/avg/max/last summaries |
-| `mcctl trace [--learn]` | live JVM GC tracer (`jstat -gcutil`): young/full collections, pause times, eden/old/metaspace occupancy — watch how the JVM manages memory, with a learn-mode walkthrough |
-| `mcctl backup [create\|list\|prune\|pull\|verify\|restore\|offsite]` | consistent snapshots (`save-off` → flush → tar+zstd → verify → `save-on` guaranteed), GFS rotation, rsync pull, safe restore, `restore --to <dir>` inspection extract, off-site rclone mirror |
-| `mcctl save` | `save-all flush` with confirmation; `--skip-if-down` for timers |
-| `mcctl watchdog [run\|arm\|disarm\|status\|install]` | self-healing daemon: crash restart with backoff, freeze detection (stale log + dead console → thread dump → restart), crash-loop breaker, TPS/heap/disk/SSH alerts |
-| `mcctl tps` / `health` / `profile` | spark TPS/MSPT/CPU, memory/disk health, async profiler → `spark.lucko.me` URL |
-| `mcctl purge` | `jcmd GC.run` with before/after heap — honest *garbage vs real leak* verdict |
-| `mcctl props [list\|get\|set]` | validated `server.properties` editor: typed/ranged keys, atomic writes, remote `.bak`, `--live` apply where supported |
-| `mcctl jvm [show\|heap 12G\|java PATH]` | `variables.txt` editor — rewrites Xms/Xmx, preserves Aikar's flags |
-| `mcctl player …` | list, whitelist add/remove/on/off, op/deop, kick/ban/pardon |
-| `mcctl cmd <anything>` / `console` | arbitrary console commands; `console` attaches to the live tmux (detach: `Ctrl-b d`) |
-| `mcctl logs [-f] [crash]` | tail/follow `latest.log` (timestamps auto-converted to your `[ui].timezone`, default São Paulo); list/fetch crash reports (escape-sequence-sanitized) |
-| `mcctl inspect [SECTION] [--learn]` | deep OS/JVM introspection: process tree, /proc internals, every JVM thread, memory maps, fds, sockets, environment, jcmd flags/heap, host PSI — each section has a `--learn` walkthrough explaining what the kernel structures mean |
-| `mcctl mods [--diff CLIENT_MODS_DIR]` | list every mod with id/version/size (metadata read from inside each jar — NeoForge/Forge/Fabric descriptors); `--diff` compares the server's pack against a local client `mods/` directory and reports server-only / client-only / version-mismatch |
-| `mcctl recipes [search QUERY\|show ID\|tag ID]` | browse the pack's recipes — **all the categories EMI shows**: crafting (shaped/shapeless), the cook family (smelting/blasting/smoking/campfire, with cook time + xp), stonecutting and smithing — read straight out of the mod jars + world datapacks (one server-side pass, like `mods`); shows ingredients, grid pattern and output. `tag <id>` resolves a `#tag` ingredient (e.g. `minecraft:planks`) to the concrete items it accepts |
-| `mcctl items [list\|search QUERY\|icon ID]` | **EMI-style item index**: every item the pack defines with its real display name (from `en_us.json`) and resolved icon texture (model `parent`-chain → texture), read from the vanilla jar + mod jars + `resourcepacks/`. `icon <id> -o out.png` downloads one item's PNG; the phone uses the same `items.manifest` + `icons.fetch` agent methods to cache icons and render recipes with pictures, offline |
-| `mcctl assets [status\|sync\|catalog]` | **vanilla item assets**: a server ships no client `assets/`, so vanilla items (`minecraft:*`) have no icon/name until `sync` fetches the **matching Mojang client jar** (version auto-detected or `[server].mc_version`) onto the server, sha1-verified and cached, scanned at lowest priority so mods/resourcepacks still override. All download traffic stays on the box ("brain on the box"); `status` shows the detected version + whether it's cached; `catalog` lists the phone's offline-sync set (every icon texture + CRC-32 + size — what the app diffs to download only what changed) |
-| `mcctl craft ID [--count N\|--max] [--source\|--receiver NAME] [--preview]` | survival **command-craft**: reads your live inventory, consumes the inputs (`/clear`) and grants the output (`/give`). `--max` makes the most your materials allow, capped at one output stack. Only ever consumes *loose* (accessible) inventory, so it can't dupe; `--preview` plans without crafting (see [the honest note below](#command-craft-pick-a-recipe-it-gets-made)) |
-| `mcctl config [tree\|get\|set\|edit]` | browse & edit the per-mod files under `config/` — `tree` lists them grouped by the owning mod (matched from the jars), `get` prints one, `edit` opens it in `$EDITOR` and re-uploads (TOML/JSON validated before write, atomic, timestamped `.bak`), `set` writes from a file/stdin; `--reload` runs `/reload`, `--restart` does a full apply. Saving relies on NeoForge's config file-watcher to live-reload mods that support it — startup/cached values still need a restart |
-| `mcctl ai [logs\|crash\|mods\|inspect\|ask\|chat]` | AI analysis & multi-turn chat, powered by **Claude or a local LLM via ollama** (`[llm].provider`): review logs, root-cause crash reports, explain what the mods do, teacher-mode walkthroughs, free-form questions, and an interactive `chat` session — all with live server context attached |
-| `mcctl stats` | local JSONL metrics history (TPS, MSPT, heap, RAM, players) |
-| `mcctl sync --pull/--push` | rsync the `config/` dir — the Better Compatibility Checker mismatch fix |
-| `mcctl agent [--schema]` | **JSON-RPC 2.0 server over SSH stdio** — the programmable contract every client (the planned phone app, scripts, dashboards) renders over; `--schema` prints the versioned, golden-tested contract |
-| `mcctl events [-f] [--since N]` | the watchdog's audit log: every heal/restart/alert, tail or follow (also streamed live over the agent's `events.subscribe`) |
-| `mcctl metrics export [--cat]` | Prometheus textfile exporter from `metrics.jsonl` for node_exporter → Grafana (atomic write; ships with `mcctl-metrics.timer`) |
-| `mcctl notify-test` | fire a test alert through every configured sink (desktop, Discord webhook, ntfy push) |
-| `mcctl postmortem [--crash NAME]` | deterministic "what went wrong" — parses the newest crash report structurally (exception class, suspected mod + jar, prompt-injection flagging), folds in watchdog events/restart history and evidence bundles; no AI, no API key (`mcctl ai crash` stays the deep dive) |
-| `mcctl doctor [--fix]` | end-to-end preflight; encodes the hard-won knowledge (below), incl. the post-incident "ops" checks: exactly one restart authority (watchdog ⇄ systemd `Restart=` ⇄ start.sh `RESTART` loop), legacy watchdog detection, fstab `nofail` on the data volume, single-brain placement + linger (one watchdog, on the box — [DESIGN-BRAIN.md](DESIGN-BRAIN.md)) |
+| `lulism status [--json] [--fast]` | process/tmux/port/players/TPS/heap/host RAM/disk/backup age, one screen |
+| `lulism start` / `stop` / `restart` | tmux + `start.sh` boot with readiness detection; graceful stop: player countdown → `save-all flush` → `stop` → SIGTERM → SIGKILL escalation |
+| `lulism dash` | live TUI: TPS sparkline, heap/RAM gauges, log tail; keys for save/backup/purge/start/stop |
+| `lulism gui` / `lulism-gui` | native GTK4/libadwaita desktop app (sidebar, 19 pages): live status & actions, TPS/heap/players history charts, console, logs, players, backups, mods, a **mod-config browser/editor** (pick a mod → edit its `config/` files in place → save with live-reload + a one-tap restart), a **Crafting** page (search the pack's recipes → a craft dialog reads your live inventory and crafts it: **Craft** = tap, **Craft max** = the phone's hold-to-max, capped at one stack), OS/JVM inspector (learn mode), AI analysis, AI chat, doctor with safe fixes, validated server.properties editor, JVM settings, crash reports + evidence bundles, spark profiler, config sync, and a **Settings** editor for the whole config.toml (SSH key + flags, ollama model picker, every section incl. your crafting IGN/source) — no hand-editing required. Opening the app onto an already-running server auto-connects to its live tmux session instead of forcing a restart |
+| `lulism watch` | line-oriented live monitor: one compact status line per interval (state/players/TPS/MSPT/heap/RAM/load), scrollable and greppable; records metric history as it runs |
+| `lulism history [tps\|mspt\|heap\|players\|mem\|load\|all]` | terminal charts of recorded metric history with min/avg/max/last summaries |
+| `lulism trace [--learn]` | live JVM GC tracer (`jstat -gcutil`): young/full collections, pause times, eden/old/metaspace occupancy — watch how the JVM manages memory, with a learn-mode walkthrough |
+| `lulism backup [create\|list\|prune\|pull\|verify\|restore\|offsite]` | consistent snapshots (`save-off` → flush → tar+zstd → verify → `save-on` guaranteed), GFS rotation, rsync pull, safe restore, `restore --to <dir>` inspection extract, off-site rclone mirror |
+| `lulism save` | `save-all flush` with confirmation; `--skip-if-down` for timers |
+| `lulism watchdog [run\|arm\|disarm\|status\|install]` | self-healing daemon: crash restart with backoff, freeze detection (stale log + dead console → thread dump → restart), crash-loop breaker, TPS/heap/disk/SSH alerts |
+| `lulism tps` / `health` / `profile` | spark TPS/MSPT/CPU, memory/disk health, async profiler → `spark.lucko.me` URL |
+| `lulism purge` | `jcmd GC.run` with before/after heap — honest *garbage vs real leak* verdict |
+| `lulism props [list\|get\|set]` | validated `server.properties` editor: typed/ranged keys, atomic writes, remote `.bak`, `--live` apply where supported |
+| `lulism jvm [show\|heap 12G\|java PATH]` | `variables.txt` editor — rewrites Xms/Xmx, preserves Aikar's flags |
+| `lulism player …` | list, whitelist add/remove/on/off, op/deop, kick/ban/pardon |
+| `lulism cmd <anything>` / `console` | arbitrary console commands; `console` attaches to the live tmux (detach: `Ctrl-b d`) |
+| `lulism logs [-f] [crash]` | tail/follow `latest.log` (timestamps auto-converted to your `[ui].timezone`, default São Paulo); list/fetch crash reports (escape-sequence-sanitized) |
+| `lulism inspect [SECTION] [--learn]` | deep OS/JVM introspection: process tree, /proc internals, every JVM thread, memory maps, fds, sockets, environment, jcmd flags/heap, host PSI — each section has a `--learn` walkthrough explaining what the kernel structures mean |
+| `lulism mods [--diff CLIENT_MODS_DIR]` | list every mod with id/version/size (metadata read from inside each jar — NeoForge/Forge/Fabric descriptors); `--diff` compares the server's pack against a local client `mods/` directory and reports server-only / client-only / version-mismatch |
+| `lulism recipes [search QUERY\|show ID\|tag ID]` | browse the pack's recipes — **all the categories EMI shows**: crafting (shaped/shapeless), the cook family (smelting/blasting/smoking/campfire, with cook time + xp), stonecutting and smithing — read straight out of the mod jars + world datapacks (one server-side pass, like `mods`); shows ingredients, grid pattern and output. `tag <id>` resolves a `#tag` ingredient (e.g. `minecraft:planks`) to the concrete items it accepts |
+| `lulism items [list\|search QUERY\|icon ID]` | **EMI-style item index**: every item the pack defines with its real display name (from `en_us.json`) and resolved icon texture (model `parent`-chain → texture), read from the vanilla jar + mod jars + `resourcepacks/`. `icon <id> -o out.png` downloads one item's PNG; the phone uses the same `items.manifest` + `icons.fetch` agent methods to cache icons and render recipes with pictures, offline |
+| `lulism assets [status\|sync\|catalog]` | **vanilla item assets**: a server ships no client `assets/`, so vanilla items (`minecraft:*`) have no icon/name until `sync` fetches the **matching Mojang client jar** (version auto-detected or `[server].mc_version`) onto the server, sha1-verified and cached, scanned at lowest priority so mods/resourcepacks still override. All download traffic stays on the box ("brain on the box"); `status` shows the detected version + whether it's cached; `catalog` lists the phone's offline-sync set (every icon texture + CRC-32 + size — what the app diffs to download only what changed) |
+| `lulism craft ID [--count N\|--max] [--source\|--receiver NAME] [--preview]` | survival **command-craft**: reads your live inventory, consumes the inputs (`/clear`) and grants the output (`/give`). `--max` makes the most your materials allow, capped at one output stack. Only ever consumes *loose* (accessible) inventory, so it can't dupe; `--preview` plans without crafting (see [the honest note below](#command-craft-pick-a-recipe-it-gets-made)) |
+| `lulism config [tree\|get\|set\|edit]` | browse & edit the per-mod files under `config/` — `tree` lists them grouped by the owning mod (matched from the jars), `get` prints one, `edit` opens it in `$EDITOR` and re-uploads (TOML/JSON validated before write, atomic, timestamped `.bak`), `set` writes from a file/stdin; `--reload` runs `/reload`, `--restart` does a full apply. Saving relies on NeoForge's config file-watcher to live-reload mods that support it — startup/cached values still need a restart |
+| `lulism ai [logs\|crash\|mods\|inspect\|ask\|chat]` | AI analysis & multi-turn chat, powered by **Claude or a local LLM via ollama** (`[llm].provider`): review logs, root-cause crash reports, explain what the mods do, teacher-mode walkthroughs, free-form questions, and an interactive `chat` session — all with live server context attached |
+| `lulism stats` | local JSONL metrics history (TPS, MSPT, heap, RAM, players) |
+| `lulism sync --pull/--push` | rsync the `config/` dir — the Better Compatibility Checker mismatch fix |
+| `lulism agent [--schema]` | **JSON-RPC 2.0 server over SSH stdio** — the programmable contract every client (the planned phone app, scripts, dashboards) renders over; `--schema` prints the versioned, golden-tested contract |
+| `lulism events [-f] [--since N]` | the watchdog's audit log: every heal/restart/alert, tail or follow (also streamed live over the agent's `events.subscribe`) |
+| `lulism metrics export [--cat]` | Prometheus textfile exporter from `metrics.jsonl` for node_exporter → Grafana (atomic write; ships with `lulism-metrics.timer`) |
+| `lulism notify-test` | fire a test alert through every configured sink (desktop, Discord webhook, ntfy push) |
+| `lulism postmortem [--crash NAME]` | deterministic "what went wrong" — parses the newest crash report structurally (exception class, suspected mod + jar, prompt-injection flagging), folds in watchdog events/restart history and evidence bundles; no AI, no API key (`lulism ai crash` stays the deep dive) |
+| `lulism doctor [--fix]` | end-to-end preflight; encodes the hard-won knowledge (below), incl. the post-incident "ops" checks: exactly one restart authority (watchdog ⇄ systemd `Restart=` ⇄ start.sh `RESTART` loop), legacy watchdog detection, fstab `nofail` on the data volume, single-brain placement + linger (one watchdog, on the box — [DESIGN-BRAIN.md](DESIGN-BRAIN.md)) |
 
 ## Install
 
@@ -72,33 +72,33 @@ makepkg -si
 Installs the CLI, the desktop app entry, systemd user units, and fish completions.
 Dependencies: `python` `python-rich` `openssh` `rsync` (optional: `libnotify`, `zstd`).
 
-For the GUI (optional — shows up in your app launcher as **mcctl**):
+For the GUI (optional — shows up in your app launcher as **lulism**):
 
 ```fish
 sudo pacman -S --needed gtk4 libadwaita python-gobject
-mcctl-gui   # or `mcctl gui`, or launch it from the app grid
+lulism-gui   # or `lulism gui`, or launch it from the app grid
 ```
 
-For AI analysis & chat (optional — powers `mcctl ai`, the GUI's AI and Chat
+For AI analysis & chat (optional — powers `lulism ai`, the GUI's AI and Chat
 pages). Pick **one** backend under `[llm]` in the config:
 
 **Claude (cloud)** — `provider = "anthropic"` (default):
 
 ```fish
-sudo pacman -S python-anthropic       # or: pipx inject mcctl anthropic
-set -Ux ANTHROPIC_API_KEY sk-ant-…    # mcctl never stores the key itself
-mcctl ai logs                         # sanity check
+sudo pacman -S python-anthropic       # or: pipx inject lulism anthropic
+set -Ux ANTHROPIC_API_KEY sk-ant-…    # lulism never stores the key itself
+lulism ai logs                        # sanity check
 ```
 
 **Local LLM (ollama)** — `provider = "ollama"`, nothing leaves the box and no
-API key is involved (mcctl talks ollama's HTTP API directly — no extra package):
+API key is involved (lulism talks ollama's HTTP API directly — no extra package):
 
 ```fish
 ollama serve &                        # the local model server
 ollama pull llama3.1                  # set [llm].ollama_model to match
-# in ~/.config/mcctl/config.toml: [llm] provider = "ollama"
-mcctl ai logs                         # sanity check
-mcctl ai chat                         # interactive conversation
+# in ~/.config/lulism/config.toml: [llm] provider = "ollama"
+lulism ai logs                        # sanity check
+lulism ai chat                        # interactive conversation
 ```
 
 In the GUI you don't have to edit the file: open **Settings → AI / LLM**, flip the
@@ -110,15 +110,46 @@ Whichever backend you pick, everything sent to it is secret-redacted
 system prompt explicitly refuses instructions embedded in logs, because this
 modpack's crash logs are known to carry prompt-injection text.
 
-**Anywhere else:** `pipx install .` then `mcctl watchdog install` for the user units.
+**Anywhere else:** `pipx install .` then `lulism watchdog install` for the user units.
+
+## Upgrading to 2.0.0
+
+`mcctl` was renamed to `lulism`. Run `./update.sh` (or `make update`) and the whole
+migration is automatic:
+
+- **Config, state and cache migrate on first run.** `~/.config/mcctl`,
+  `~/.local/state/mcctl` and `~/.cache/mcctl` are **copied** (not moved) to their
+  `lulism` equivalents the first time `lulism` runs — the old trees are left in
+  place as a rollback path, and an existing `lulism` dir is never clobbered.
+- **Systemd units migrate via `lulism watchdog install`:** it stops, disables and
+  removes all seven pre-2.0.0 `mcctl-*` units before installing the `lulism-*`
+  replacements, so you never end up with two restart authorities fighting over the
+  server (the failure mode behind the 2026-06-11 outage).
+- **The old pipx package is removed automatically.** `update.sh` runs
+  `pipx uninstall mcctl` for you before reinstalling as `lulism` — no manual
+  cleanup needed.
+- **The `mcctl` command still works.** It's now a thin compatibility shim that
+  execs straight into `lulism` with the same argv, and prints a deprecation
+  notice to stderr. It's **removed in 3.0.0** — migrate your scripts/muscle
+  memory before then.
+- **Phones keep working unchanged**, but should be updated: in the app's
+  Settings, change the agent command to `lulism agent` (the old default,
+  `mcctl agent`, still connects via the shim above — it just won't survive
+  3.0.0).
+- **Prometheus/node_exporter:** repoint `--collector.textfile.directory` at
+  `~/.local/state/lulism` (`lulism doctor` warns if it detects a stale
+  `~/.local/state/mcctl/mcctl.prom` that node_exporter is still reading).
+- **The desktop entry's app ID changed** (`io.github.lonaivdev_cell.mcctl` →
+  `io.github.lonaivdev_cell.lulism`), so a launcher/taskbar pin made against the
+  old entry resets — re-pin `lulism` after upgrading.
 
 ## Quickstart
 
 ```fish
-mcctl init                  # writes ~/.config/mcctl/config.toml (CarborioLand defaults)
-mcctl doctor --fix          # verifies SSH→layout→JVM→props; applies safe fixes
-mcctl start                 # boots in tmux, waits for "Done (…)!"
-mcctl dash                  # watch it live
+lulism init                  # writes ~/.config/lulism/config.toml (CarborioLand defaults)
+lulism doctor --fix          # verifies SSH→layout→JVM→props; applies safe fixes
+lulism start                 # boots in tmux, waits for "Done (…)!"
+lulism dash                  # watch it live
 ```
 
 `doctor --fix` will: set `SKIP_JAVA_CHECK=true`, `WAIT_FOR_USER_INPUT=false`,
@@ -129,19 +160,19 @@ and enable RCON with a generated password (active after next restart).
 
 ```fish
 systemctl --user daemon-reload
-systemctl --user enable --now mcctl-watchdog.service   # self-healing
-systemctl --user enable --now mcctl-backup.timer       # daily 04:30 backup + rotation
-systemctl --user enable --now mcctl-autosave.timer     # save-all every 20 min
-systemctl --user enable --now mcctl-metrics.timer      # refresh the Prometheus textfile every minute
-mcctl watchdog arm                                     # actually allow healing
-loginctl enable-linger $USER                           # keep units running after logout
+systemctl --user enable --now lulism-watchdog.service   # self-healing
+systemctl --user enable --now lulism-backup.timer       # daily 04:30 backup + rotation
+systemctl --user enable --now lulism-autosave.timer     # save-all every 20 min
+systemctl --user enable --now lulism-metrics.timer      # refresh the Prometheus textfile every minute
+lulism watchdog arm                                     # actually allow healing
+loginctl enable-linger $USER                            # keep units running after logout
 ```
 
 **Where these units run:** the decided target topology is **on the box**
-(mcctl installed there with `transport = "local"`, linger enabled) so the
+(lulism installed there with `transport = "local"`, linger enabled) so the
 watchdog, the desktop, and the phone all share one desired/events truth —
 [DESIGN-BRAIN.md](DESIGN-BRAIN.md) is the decision record and migration plan.
-`mcctl doctor` warns when watchdog daemons run on both ends (`ops: brain
+`lulism doctor` warns when watchdog daemons run on both ends (`ops: brain
 placement`) and when the brain host lacks linger (`ops: brain linger`).
 
 ### Self-healing semantics (read once)
@@ -149,35 +180,35 @@ placement`) and when the brain host lacks linger (`ops: brain linger`).
 | State | Meaning |
 |---|---|
 | `armed` | master switch — **off by default**; disarm during migrations so a stale server can't be relaunched |
-| `desired` | user intent, set by `mcctl start`/`stop` — the watchdog never resurrects a server you stopped on purpose |
-| `halted` | crash-loop breaker tripped (default: 3 restarts/hour) — alerts loudly, stays down until `mcctl start` or re-arm |
+| `desired` | user intent, set by `lulism start`/`stop` — the watchdog never resurrects a server you stopped on purpose |
+| `halted` | crash-loop breaker tripped (default: 3 restarts/hour) — alerts loudly, stays down until `lulism start` or re-arm |
 
 Freeze = log silent beyond `freeze_log_age` **and** console unresponsive → thread
 dump saved locally → forced restart. Evidence bundles (pane capture, log tail,
-crash report) land in `~/.local/state/mcctl/crashes/` before every heal.
+crash report) land in `~/.local/state/lulism/crashes/` before every heal.
 
 ## Backups
 
 - **Consistent while live:** `save-off` → `save-all flush` → wait "Saved the game" → `tar | zstd` → integrity test → `save-on` (re-enabled on *every* code path).
 - **Rotation (GFS):** newest 8 + 1/day for 7 days + 1/ISO-week for 4 weeks; `--full` instance archives are never auto-deleted.
 - **Disk guard:** refuses below `min_free_gb`; never overwrites — restore moves the current world to `world.pre-restore-<ts>`.
-- **Inspect without risk:** `mcctl backup restore <name> --to <dir>` unpacks any snapshot (including `--full`) into a fresh directory for side-by-side inspection — it never touches the live world and works while the server is running (the destination must be empty; the archive is integrity-checked first).
-- `mcctl backup pull` mirrors archives to this machine over rsync.
-- **Off-site mirror:** point `backup.offsite_remote` at an [rclone](https://rclone.org) target (e.g. OCI Object Storage, `oci:bucket/world`) and `mcctl backup offsite` pushes the archives there — `copy` (never deletes off-site) or `sync` (mirror the pruned set), filtered to finished `{prefix}-*.tar.*` archives. Set `offsite_after_prune = true` to push automatically after each `mcctl backup create` rotates (best-effort: a failed mirror never fails the local backup, but `--notify` raises an alert).
+- **Inspect without risk:** `lulism backup restore <name> --to <dir>` unpacks any snapshot (including `--full`) into a fresh directory for side-by-side inspection — it never touches the live world and works while the server is running (the destination must be empty; the archive is integrity-checked first).
+- `lulism backup pull` mirrors archives to this machine over rsync.
+- **Off-site mirror:** point `backup.offsite_remote` at an [rclone](https://rclone.org) target (e.g. OCI Object Storage, `oci:bucket/world`) and `lulism backup offsite` pushes the archives there — `copy` (never deletes off-site) or `sync` (mirror the pruned set), filtered to finished `{prefix}-*.tar.*` archives. Set `offsite_after_prune = true` to push automatically after each `lulism backup create` rotates (best-effort: a failed mirror never fails the local backup, but `--notify` raises an alert).
 
 ## Security notes
 
 - RCON is reached **only** through the SSH tunnel; keep 25575 closed in the OCI
-  security list — `mcctl doctor` actively probes from outside and fails if it's reachable.
+  security list — `lulism doctor` actively probes from outside and fails if it's reachable.
 - All remote output (logs, crash reports, console replies) is stripped of ANSI/OSC
   escape sequences before printing — remote text can't drive your terminal.
 - SSH runs with `BatchMode=yes` (keys/agent only) and `accept-new` host keys.
   Your `~/.ssh/config`, agent and default keys are used as-is; to pin a specific
-  key set `[server].ssh_key` (or edit it in the GUI's Settings tab) — mcctl then
+  key set `[server].ssh_key` (or edit it in the GUI's Settings tab) — lulism then
   passes `ssh -i <key> -o IdentitiesOnly=yes`.
 - Heads-up: crash logs from this modpack are known to contain embedded
   prompt-injection text. It's inert noise — read the stack trace, ignore the prose.
-  `mcctl postmortem` detects and flags it (diagnosis comes from the stack trace
+  `lulism postmortem` detects and flags it (diagnosis comes from the stack trace
   only), and the AI path seals it inside `<data>` envelopes — an embedded
   `</data>` is neutralized so log text can never break out of the envelope.
 
@@ -189,19 +220,19 @@ crash report) land in `~/.local/state/mcctl/crashes/` before every heal.
 | GraalVM vs SPC java check → `SKIP_JAVA_CHECK=true` | `doctor --fix` |
 | `WAIT_FOR_USER_INPUT=false` or tmux hangs on Enter | `doctor --fix` |
 | IPv4/IPv6: `server-ip=0.0.0.0`, `use-native-transport=false`, `-Djava.net.preferIPv4Stack=true` | `doctor` checks, props specs |
-| `-XX:+ExplicitGCInvokesConcurrent` so `jcmd GC.run` works | `mcctl purge` |
+| `-XX:+ExplicitGCInvokesConcurrent` so `jcmd GC.run` works | `lulism purge` |
 | Verify by **process + session**, not session name | `find_pid` (pgrep + `/proc/<pid>/cwd`) |
 | Watchdog must stand down during migrations | disarmed by default, `desired` intent tracking |
-| `config/` drift → BCC version mismatch | `mcctl sync` |
+| `config/` drift → BCC version mismatch | `lulism sync` |
 | Exactly ONE restart authority, or healers fight (2026-06-11 outage) | doctor `ops:` checks (systemd `Restart=`, legacy watchdog, start.sh `RESTART` loop) |
 | A data volume without `nofail` hangs boot with SSH down | doctor `ops: fstab nofail` |
-| Never reboot the VM for a server problem — diagnose the process | `mcctl postmortem`, `mcctl logs crash`, bounded stop escalation in `mcctl stop` |
+| Never reboot the VM for a server problem — diagnose the process | `lulism postmortem`, `lulism logs crash`, bounded stop escalation in `lulism stop` |
 | Exactly ONE brain: watchdog + desired/events state live on the box; every face renders it | [DESIGN-BRAIN.md](DESIGN-BRAIN.md), doctor `ops: brain placement` / `ops: brain linger` |
 
 ## Architecture
 
 ```
-src/mcctl/
+src/lulism/
 ├── cli.py        argparse tree, exit codes (0 ok / 1 error / 2 usage / 3 unreachable)
 ├── config.py     TOML config, validation, template
 ├── transport.py  SSH ControlMaster wrapper + LocalTransport (dev/tests)
@@ -224,9 +255,9 @@ src/mcctl/
 ├── llm.py        AI analysis & chat: Anthropic + ollama backends, redaction, data envelopes, streaming
 ├── tracer.py     JVM GC tracer — jstat -gcutil parsing (pure) + one streaming round-trip
 ├── charts.py     terminal charting primitives (sparklines, block charts) — pure
-├── watch.py      `mcctl watch` line-oriented live monitor + metric recorder
-├── agent.py      `mcctl agent` JSON-RPC 2.0 server over stdio — method registry reusing the core, generated+golden-tested schema, event stream
-├── events.py     append-only event journal (watchdog ⇄ agent ⇄ `mcctl events`)
+├── watch.py      `lulism watch` line-oriented live monitor + metric recorder
+├── agent.py      `lulism agent` JSON-RPC 2.0 server over stdio — method registry reusing the core, generated+golden-tested schema, event stream
+├── events.py     append-only event journal (watchdog ⇄ agent ⇄ `lulism events`)
 ├── prometheus.py textfile exporter — pure render + atomic write from metrics.jsonl
 ├── dash.py       rich Live dashboard
 ├── gui.py        GUI launcher: dependency check, friendly pacman hint
@@ -236,7 +267,7 @@ src/mcctl/
 
 ## Programmable: the agent
 
-`mcctl agent` is a long-lived **JSON-RPC 2.0** server speaking newline-delimited
+`lulism agent` is a long-lived **JSON-RPC 2.0** server speaking newline-delimited
 JSON over its stdin/stdout — meant to be run at the end of a single SSH channel.
 Every method reuses the same tested core the CLI calls; nothing is reimplemented.
 This is the contract the Android app (and any script or dashboard)
@@ -245,12 +276,12 @@ renders over — *one brain, many faces*.
 ```fish
 # locally, eyeball it (each line is one request/response):
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"agent.hello","params":{"capabilities":["actions"]}}' \
-              '{"jsonrpc":"2.0","id":2,"method":"status","params":{"fast":true}}' | mcctl agent
+              '{"jsonrpc":"2.0","id":2,"method":"status","params":{"fast":true}}' | lulism agent
 
 # over SSH, exactly how a client drives it:
-ssh carborio mcctl agent      # then write JSON-RPC lines, read responses + `event` notifications
+ssh carborio lulism agent      # then write JSON-RPC lines, read responses + `event` notifications
 
-mcctl agent --schema          # the versioned, machine-readable contract
+lulism agent --schema          # the versioned, machine-readable contract
 ```
 
 - **No new surface:** no listening port, no stored credential — auth is the SSH
@@ -261,7 +292,7 @@ mcctl agent --schema          # the versioned, machine-readable contract
 - **Destructive methods** (`kill`, `backup.restore`, `props.set`, …) require both
   a capability granted in `agent.hello` and an explicit `"confirm": true`.
 - **Events:** `events.subscribe` streams watchdog heals/alerts as JSON-RPC
-  notifications, backed by the same `events.jsonl` journal `mcctl events` tails.
+  notifications, backed by the same `events.jsonl` journal `lulism events` tails.
 
 ## EMI on your phone: item & recipe browser + command-craft
 
@@ -271,7 +302,7 @@ drawn as a proper crafting grid, flip between **what makes** and **what uses** a
 any ingredient to pivot — then **craft it for real** against your live inventory.
 
 EMI is a *client* mod: it has every resource pack on hand and renders each stack from item
-models, textures, and `en_us.json`. mcctl is **server-side** — it can't reach your game client —
+models, textures, and `en_us.json`. lulism is **server-side** — it can't reach your game client —
 so the **brain reads the very files EMI reads** (mod jars + `resourcepacks/` + the vanilla client
 jar) and ships the item index + icon PNGs down the SSH channel for the app to cache and render
 **offline**. *One brain, many faces*: the tested Python core resolves everything; the CLI, the
@@ -284,7 +315,7 @@ agent, and the phone only render it.
 | **Recipes** | `crafting.py` | Every vanilla **category EMI shows** — crafting (shaped/shapeless), the cook family (smelting/blasting/smoking/campfire, with cook time + xp), stonecutting, smithing — scanned from the mod jars **and** world datapacks in one pass, newest-pack-wins. Shaped recipes carry a **positional grid** so a client can draw icons in the right cells. |
 | **Item index** | `assets.py` | Every item's **display name** (from `en_us.json`) + its **icon texture** (resolved through the model `parent`-chain), for the whole pack. |
 | **Icons** | `assets.py` | The actual **PNG bytes**, fetched in batches and cached — modded items resolve from their own jars; vanilla items from the client jar (below). |
-| **Vanilla** | `assets.py` | A server ships **no client `assets/`**, so `mcctl assets sync` fetches the **matching Mojang client jar** onto the box and scans it at lowest priority — mods/resourcepacks still override. |
+| **Vanilla** | `assets.py` | A server ships **no client `assets/`**, so `lulism assets sync` fetches the **matching Mojang client jar** onto the box and scans it at lowest priority — mods/resourcepacks still override. |
 
 Resource packs override mods override vanilla — the same load-order rule throughout.
 
@@ -308,7 +339,7 @@ The Android **Items** screen is the browser:
    items you happened to open. It's **idempotent and resumable**: the brain hands over an
    `assets.catalog` (every texture's CRC-32 + size), the phone diffs it against what it already
    holds and fetches **only what's missing or changed** (a resource-pack swap re-pulls just those
-   icons). If the server's `mcctl` is older than the app and has no `assets.catalog`, the phone
+   icons). If the server's `lulism` is older than the app and has no `assets.catalog`, the phone
    **degrades gracefully** — it derives the texture set from `items.manifest` and still pulls every
    icon (count-based progress, no CRC diff) instead of failing. A long download is promoted to a
    foreground service so it survives backgrounding; **Settings → Offline assets** shows the cache
@@ -319,21 +350,21 @@ The Android **Items** screen is the browser:
 ### On the CLI / desktop
 
 ```fish
-mcctl items search diamond        # the item index: id · display name · icon texture
-mcctl items icon minecraft:chest -o chest.png   # download one item's PNG
-mcctl recipes search chest        # recipes across every category (id/output match)
-mcctl recipes show minecraft:chest    # ingredients, grid, cook time…
-mcctl recipes tag minecraft:planks    # what a #tag ingredient accepts
-mcctl assets status               # detected MC version + is the vanilla jar cached?
-mcctl assets sync                 # fetch the matching client jar (vanilla icons + names)
-mcctl assets catalog              # the phone's offline-sync set: icon count + total bytes
-mcctl craft minecraft:chest --preview  # plan against live inventory, craft nothing
-mcctl craft minecraft:chest --max      # craft the most your materials allow (one stack)
+lulism items search diamond        # the item index: id · display name · icon texture
+lulism items icon minecraft:chest -o chest.png   # download one item's PNG
+lulism recipes search chest        # recipes across every category (id/output match)
+lulism recipes show minecraft:chest    # ingredients, grid, cook time…
+lulism recipes tag minecraft:planks    # what a #tag ingredient accepts
+lulism assets status               # detected MC version + is the vanilla jar cached?
+lulism assets sync                 # fetch the matching client jar (vanilla icons + names)
+lulism assets catalog              # the phone's offline-sync set: icon count + total bytes
+lulism craft minecraft:chest --preview  # plan against live inventory, craft nothing
+lulism craft minecraft:chest --max      # craft the most your materials allow (one stack)
 ```
 
 ### Command-craft: "pick a recipe, it gets made"
 
-mcctl can't reach your open crafting GUI (that's a client mod's job — JEI/REI's recipe-transfer
+lulism can't reach your open crafting GUI (that's a client mod's job — JEI/REI's recipe-transfer
 "+"), so instead it reproduces the **outcome** over the console: it reads your live inventory,
 consumes the inputs with `/clear`, and grants the output with `/give`. It works the same at a
 crafting table **or** a Backpacked crafting backpack — you just have to be online.
@@ -353,7 +384,7 @@ crafting table **or** a Backpacked crafting backpack — you just have to be onl
 
 > *Non-vanilla recipe types* (Create's mixing, Mekanism machines, …) use bespoke formats +
 > per-mod plugins — exactly like EMI needs an addon for them — so they're out of scope here.
-> The full contract is in `mcctl agent --schema`: `items.manifest`, `icons.fetch`,
+> The full contract is in `lulism agent --schema`: `items.manifest`, `icons.fetch`,
 > `recipes.search/get/tag`, `craft.preview/do`, `assets.sync`. See
 > **[android/README.md](android/README.md)** and **[TODO.md](TODO.md)**.
 
@@ -362,9 +393,9 @@ crafting table **or** a Backpacked crafting backpack — you just have to be onl
 - **Phone push (ntfy / UnifiedPush):** set `[watchdog].ntfy_topic` (server
   defaults to `https://ntfy.sh`) and watchdog alerts reach your phone. ntfy is a
   UnifiedPush distributor, so the future app gets push for free — no FCM, no
-  relay. `mcctl notify-test` exercises every sink.
-- **Prometheus / Grafana:** `mcctl metrics export` writes a node_exporter
-  textfile from the recorded history; enable `mcctl-metrics.timer` to refresh it
+  relay. `lulism notify-test` exercises every sink.
+- **Prometheus / Grafana:** `lulism metrics export` writes a node_exporter
+  textfile from the recorded history; enable `lulism-metrics.timer` to refresh it
   every minute and point `--collector.textfile.directory` at it.
 
 ## Development & testing
@@ -386,7 +417,7 @@ CI runs lint + both suites on every push.
 ## Android companion app
 
 The phone client lives in **[android/](android/)** — Kotlin + Jetpack Compose, a
-lush Minecraft-themed UI, and a **thin client over `mcctl agent`**: it opens one
+lush Minecraft-themed UI, and a **thin client over `lulism agent`**: it opens one
 SSH channel, runs the JSON-RPC server, and renders the contract. *One brain, two
 faces* — the tested Python core stays the single source of truth.
 
@@ -417,7 +448,7 @@ the **release** workflow manually): it publishes a GitHub Release with the APK a
 [CLAUDE.md](CLAUDE.md#cutting-an-android-release--obtainium) and
 [android/README.md](android/README.md#releasing--installing-via-obtainium).
 
-> **Phase 0 (the server-side API) shipped in 0.5.0:** `mcctl agent` is the
+> **Phase 0 (the server-side API) shipped in 0.5.0:** `lulism agent` is the
 > JSON-RPC contract the app renders over, the `events.jsonl` journal +
 > `events.subscribe` give it a push-style stream, and the ntfy bridge already
 > delivers watchdog alerts to a phone — see [DESIGN-0.5.0.md](DESIGN-0.5.0.md).

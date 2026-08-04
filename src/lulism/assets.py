@@ -2,7 +2,7 @@
 
 EMI is a *client* mod, so it has every loaded resource pack on hand — item
 models, block models, textures, and the `en_us` lang file — and renders each
-stack from them. mcctl is server-side, so to give the phone the same thing it
+stack from them. lulism is server-side, so to give the phone the same thing it
 must read the same files EMI reads and ship the relevant ones down the SSH
 channel. That's exactly what this module does, in two passes that mirror
 `crafting.py`'s recipe scan:
@@ -340,7 +340,7 @@ def load_assets(t: BaseTransport, cfg: Config) -> tuple[dict[str, str], dict[str
     r = t.run(script, timeout=180)
     if "==NOPY" in r.out:
         raise AssetError("the server has no python3 — asset extraction needs it "
-                         "(same requirement as `mcctl mods`)")
+                         "(same requirement as `lulism mods`)")
     return parse_asset_listing(util.sanitize_terminal(r.out))
 
 

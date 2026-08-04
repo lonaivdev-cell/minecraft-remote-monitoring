@@ -167,7 +167,7 @@ def list_mods(t: BaseTransport, cfg: Config) -> list[ModInfo]:
 
 
 def render_text(mods: list[ModInfo]) -> str:
-    """Plain-text table shared by the GUI and `mcctl ai mods` payloads."""
+    """Plain-text table shared by the GUI and `lulism ai mods` payloads."""
     total = sum(m.size for m in mods)
     lines = [f"{len(mods)} mods, {util.human_bytes(total)} total", ""]
     for m in mods:
@@ -182,7 +182,7 @@ def render_text(mods: list[ModInfo]) -> str:
 def _local_listing(mods_dir: str) -> str:
     """The same ==JAR/==META stream the remote lister emits, produced in-process.
 
-    The client pack lives on *this* machine (mcctl runs on the player's desktop),
+    The client pack lives on *this* machine (lulism runs on the player's desktop),
     so we read the jars directly instead of shelling python3 over SSH — then feed
     the identical stream through `parse_listing`, reusing every descriptor parser.
     """
@@ -293,7 +293,7 @@ def diff_mods(server: list[ModInfo], client: list[ModInfo]) -> ModDiff:
 
 
 def render_diff(diff: ModDiff) -> str:
-    """Plain-text diff summary (shared by the GUI and `mcctl ai` payloads)."""
+    """Plain-text diff summary (shared by the GUI and `lulism ai` payloads)."""
     def line(m: ModInfo) -> str:
         return f"  {m.name or m.mod_id or m.file} ({m.version or '?'})  [{m.file}]"
 

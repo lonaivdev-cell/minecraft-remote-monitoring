@@ -150,7 +150,7 @@ class Dashboard:
             ("  WD:armed" if st.armed else "  WD:off", "green" if st.armed else "dim"),
             (" HALTED" if st.halted else "", "bold red"),
         )
-        root["header"].update(Panel(head, title="mcctl — CarborioLand", border_style="cyan"))
+        root["header"].update(Panel(head, title="lulism — CarborioLand", border_style="cyan"))
 
         perf = Table.grid(padding=(0, 1))
         perf.add_column(justify="right", style="bold")
@@ -254,7 +254,7 @@ class Dashboard:
 
     def run(self) -> None:
         if not sys.stdin.isatty():
-            raise SystemExit("mcctl dash needs a TTY")
+            raise SystemExit("lulism dash needs a TTY")
         keys: queue.Queue = queue.Queue()
         reader = _KeyReader(keys)
         reader.start()
