@@ -65,3 +65,26 @@ def test_exit_codes_pass_through(args, code):
     r = subprocess.run([str(SCRIPTS / "mcctl"), *args],
                        capture_output=True, text=True, env=env, timeout=60)
     assert r.returncode == code
+
+
+@pytest.mark.integration
+def test_works_when_scripts_dir_is_not_on_path():
+    """The field case: systemd user units and non-interactive SSH both run with
+    a minimal PATH that excludes ~/.local/bin, where pipx puts both scripts."""
+    r = subprocess.run([str(SCRIPTS / "mcctl"), "agent", "--schema"],
+                       capture_output=True, text=True, timeout=60,
+                       env={"PATH": "/usr/bin:/bin", "HOME": os.environ.get("HOME", "/tmp")})
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["protocol"] == 1
+
+
+def test_reports_exec_failure_on_stderr(monkeypatch, capsys):
+    def boom(file, args):
+        raise OSError(2, "No such file or directory")
+
+    monkeypatch.setattr(os, "execvp", boom)
+    monkeypatch.setattr(shim, "_target", lambda: "lulism")
+    assert shim.main(["status"]) == 1
+    out = capsys.readouterr()
+    assert out.out == ""
+    assert "cannot exec lulism" in out.err
