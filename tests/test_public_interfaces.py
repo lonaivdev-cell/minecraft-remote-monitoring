@@ -101,15 +101,23 @@ def test_no_stray_mcctl_identifiers_survive():
     # key do not trip this. It DOES match mcctl-watchdog.service — those live in
     # allowlisted modules by design.
     pattern = re.compile(r"\bmcctl\b")
+    # units/ ships inside the package and is its only non-.py content, so a
+    # `*.py` sweep never reads it: an `ExecStopPost=/usr/bin/mcctl …` or a
+    # `Description=mcctl …` would install into ~/.config/systemd/user/ with this
+    # guard green. Nothing else covers that text either — the sibling test below
+    # compares only their *filenames*, and test_units_migration's check reads
+    # only lines starting with `ExecStart=`.
+    shipped = (sorted(pkg.rglob("*.py"))
+               + sorted(p for p in (pkg / "units").iterdir() if p.is_file()))
     leaks = {}
-    for py in sorted(pkg.rglob("*.py")):
-        if py.name in LEAK_ALLOWLIST_MODULES:
+    for f in shipped:
+        if f.name in LEAK_ALLOWLIST_MODULES:
             continue
-        hits = [ln.strip() for ln in py.read_text(encoding="utf-8").splitlines()
+        hits = [ln.strip() for ln in f.read_text(encoding="utf-8").splitlines()
                 if pattern.search(ln)
                 and not any(ok in ln for ok in LEAK_ALLOWLIST_LINES)]
         if hits:
-            leaks[py.name] = hits
+            leaks[f.name] = hits
     assert leaks == {}, f"stray mcctl identifiers: {leaks}"
 
 
