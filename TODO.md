@@ -1,5 +1,38 @@
 # TODO
 
+## [P0] Revamp — from Minecraft controller to server resource monitor (widget-first)
+
+**Decided 2026-08-04; the redesign session is planned for 2026-08-05.**
+
+**The goal of this revamp:** lulism stops being a monitor for one specific game
+and becomes a **server resource monitoring program** — the thing it watches is
+*the box* (CPU, RAM, disk, load, services), and its end-product face is a
+**phone home-screen widget** showing the server's health at a glance. Minecraft
+demotes from "the reason the program exists" to one optional workload the
+monitor can additionally understand.
+
+Context: the current architecture assumes a Minecraft install at its center —
+every probe, the watchdog, backups, and doctor are anchored on `server_dir`.
+The first seed of the pivot shipped in v2.0.1: doctor treats a missing
+Minecraft install as a warning ("monitoring-only mode") instead of a fatal
+error, so lulism already runs on a box that hosts no game at all.
+
+To settle in tomorrow's design session (open questions, not decisions):
+
+- [ ] Scope of "server resources": which host metrics/services are core
+      (CPU/RAM/disk/load/net? systemd units? docker?), and what the always-on
+      collector looks like without a Minecraft process to anchor on.
+- [ ] Where Minecraft lands: optional plugin/module on top of the generic
+      monitor vs. a separate profile — and what happens to the MC-specific
+      surface (TPS, backups, crafting, RCON) during the transition.
+- [ ] The widget: Android home-screen widget as the primary renderer (data via
+      the existing `lulism agent` contract? push vs. poll? which numbers earn
+      the tiny screen?).
+- [ ] What of "one brain, many faces" carries over unchanged (agent JSON-RPC,
+      golden schema, watchdog/state machinery) and what gets redone.
+- [ ] Versioning/migration: this is a breaking identity change — likely 3.0.0;
+      decide what compatibility (if any) the 2.x Minecraft feature set keeps.
+
 ## [P1] Android companion app — full development plan
 
 **Goal:** manage CarborioLand from a phone with feature parity with `lulism`:

@@ -57,6 +57,31 @@ def _by_name(results):
     return {r.name: r for r in results}
 
 
+# -------- monitoring-only mode: a box with no Minecraft install must still pass
+
+
+def test_missing_server_dir_is_a_warning_not_fatal(fake_t, cfg):
+    """No Minecraft on the box (yet) is a configuration state, not a broken
+    stack: doctor reports the missing server_dir as WARN, marks the server-
+    anchored checks SKIPped rather than cascade-failing them, and nothing in
+    the result set is FAIL — so the CLI exits 0 and lulism keeps working as a
+    host monitor."""
+    res = run_doctor(cfg, fake_t)
+    by = _by_name(res)
+
+    r = by["remote: server_dir"]
+    assert r.level is Level.WARN
+    assert "no Minecraft install" in r.detail
+    assert "server_dir" in r.hint
+
+    skip = by["remote: server checks"]
+    assert skip.level is Level.SKIP
+    assert "server_dir" in skip.detail
+
+    assert "remote: start script" not in by  # skipped, not failed
+    assert not [x for x in res if x.level is Level.FAIL]
+
+
 def test_ops_warns_on_every_competing_restart_authority(fake_t, cfg):
     _layout(fake_t, cfg)
     state.set_armed(True)
