@@ -80,7 +80,13 @@ def run_doctor(cfg: Config, t: BaseTransport, *, fix: bool = False) -> list[Chec
     if t.exists(s.server_dir):
         out.append(_ok("remote: server_dir", s.server_dir))
     else:
-        out.append(_fail("remote: server_dir", f"{s.server_dir} missing"))
+        # No Minecraft on the box is a valid state (host monitoring only), not
+        # a broken stack: warn, skip the server-anchored checks, exit 0.
+        out.append(_warn("remote: server_dir",
+                         f"{s.server_dir} missing — no Minecraft install; host checks only",
+                         "set server.server_dir in config.toml when a server exists here"))
+        out.append(CheckResult("remote: server checks", Level.SKIP,
+                               "skipped (no server_dir)"))
         return out
     start_entry = s.start_command.split()[-1]
     if t.exists(f"{s.server_dir}/{start_entry}"):
