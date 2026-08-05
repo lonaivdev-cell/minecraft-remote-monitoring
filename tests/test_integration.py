@@ -17,6 +17,7 @@ import time
 import uuid
 
 import pytest
+from conftest import integration_gate
 
 from lulism.backup import BackupManager
 from lulism.config import Config
@@ -26,7 +27,12 @@ from lulism.transport import LocalTransport
 
 pytestmark = [
     pytest.mark.integration,
-    pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux not installed"),
+    # A plain skipif here means a runner that lost tmux (the apt-cache action is
+    # third-party and best-effort) silently drops the entire real-tmux safety
+    # net and still reports a green integration step. CI sets
+    # LULISM_REQUIRE_INTEGRATION=1, which turns "tmux is missing" into an error
+    # there while a developer's box without tmux still just skips.
+    integration_gate(shutil.which("tmux") is not None, "tmux is not installed"),
 ]
 
 FAKESERVER = r"""#!/usr/bin/env bash

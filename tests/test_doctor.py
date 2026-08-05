@@ -17,12 +17,23 @@ _REAL_UNIT_IS_ACTIVE = doctor_mod._unit_is_active
 
 @pytest.fixture(autouse=True)
 def _no_real_local_probes(monkeypatch):
-    """_ops_checks() asks this machine about its own units and watchdog
-    processes. Pin all three so the suite cannot depend on what the developer's
-    box happens to have enabled or running; the tests that care override them."""
+    """_ops_checks() asks this machine about its own units, watchdog processes
+    and logind state. Pin all four so the suite cannot depend on what the
+    developer's box happens to have enabled or running; the tests that care
+    override them.
+
+    _local_linger() belongs in this list: whenever a test makes
+    _local_watchdog_active() true over the local transport, _ops_checks() shells
+    out to `loginctl show-user $(getpass.getuser())`. On a box with a logind
+    session that answers "yes" and an extra `ops: brain linger` OK appears in the
+    result set; on a CI runner with no user record loginctl fails, the check
+    returns None and the result is absent. '' (loginctl gave no answer) is the
+    neutral pin — the same result set in both places, and no unmocked subprocess
+    reaching real user state."""
     monkeypatch.setattr(doctor_mod, "_watchdog_process_count", lambda: 0)
     monkeypatch.setattr(doctor_mod, "_unit_is_enabled", lambda _u: False)
     monkeypatch.setattr(doctor_mod, "_unit_is_active", lambda _u: False)
+    monkeypatch.setattr(doctor_mod, "_local_linger", lambda: "")
 
 
 VARIABLES = (
@@ -194,6 +205,12 @@ def test_dual_restart_authority_verdicts(fake_t, cfg, monkeypatch,
 
     res = _by_name(run_doctor(cfg, fake_t))
 
+    # `procs >= 1` sends _ops_checks() down the local-brain branch, which asks
+    # logind about the current user. With _local_linger() pinned to '' by the
+    # autouse fixture the answer is "no opinion" everywhere, so the result set
+    # is the same on a developer's box as on a runner with no logind session.
+    assert "ops: brain linger" not in res
+
     if legacy_warns:
         r = res["ops: pre-2.0.0 units still present"]
         assert r.level is Level.WARN
@@ -295,11 +312,17 @@ def test_no_brain_anywhere_warns_self_healing_off(fake_t, cfg, monkeypatch):
     assert "self-healing is off" in res["ops: brain placement"].detail
 
 
-def test_local_transport_box_checks_its_own_linger(fake_t, cfg, monkeypatch):
-    """Post-migration: doctor run ON the box (transport=local) owns the linger check."""
+@pytest.mark.parametrize("linger,level", [("no", Level.WARN), ("yes", Level.OK), ("", None)])
+def test_local_transport_box_checks_its_own_linger(fake_t, cfg, monkeypatch, linger, level):
+    """Post-migration: doctor run ON the box (transport=local) owns the linger
+    check. All three loginctl answers are pinned here, including '' (no logind
+    user record — a CI runner), which must stay quiet rather than guess."""
     _layout(fake_t, cfg)
     monkeypatch.setattr(doctor_mod, "_local_watchdog_active", lambda: True)
-    monkeypatch.setattr(doctor_mod, "_local_linger", lambda: "no")
+    monkeypatch.setattr(doctor_mod, "_local_linger", lambda: linger)
     res = _by_name(run_doctor(cfg, fake_t))
     assert res["ops: brain placement"].level is Level.OK
-    assert res["ops: brain linger"].level is Level.WARN
+    if level is None:
+        assert "ops: brain linger" not in res
+    else:
+        assert res["ops: brain linger"].level is level

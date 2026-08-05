@@ -31,4 +31,9 @@ jobs:
         run: pytest -m "not integration" -v
 
       - name: Integration tests (real tmux + fake server)
+        # a skipped integration suite is an empty safety net, not a pass: the
+        # flag makes a missing tmux (or missing console scripts) fail the job
+        # instead of exiting 0 with nothing executed.
+        env:
+          LULISM_REQUIRE_INTEGRATION: "1"
         run: pytest -m "integration" -v

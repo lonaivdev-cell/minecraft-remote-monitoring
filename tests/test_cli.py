@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 
 import pytest
 
@@ -161,7 +162,24 @@ def test_transport_error_exit_code(tmp_path, monkeypatch, capsys, fake_t):
     assert cli.main(["save", "--config", str(cfgfile)]) == 3
 
 
-def test_watchdog_install_writes_units_to_xdg(isolated_xdg, capsys, monkeypatch):
+def _pin_argv0(monkeypatch, tmp_path, name="lulism"):
+    """_install_units() renders ExecStart from sys.argv[0] (cli.py:650), so the
+    bytes it writes depend on how the test runner was invoked: `python -m pytest`
+    gives .../pytest/__main__.py while the `pytest` console script gives
+    <venv>/bin/pytest. render_units() currently clamps both to /usr/bin/lulism,
+    so the tests agree today — but only by accident, and the pipx rewrite branch
+    they nominally cover is never reached. Own argv[0] and return the exe the
+    unit files must name."""
+    bindir = tmp_path / "opt" / "bin"
+    bindir.mkdir(parents=True, exist_ok=True)
+    exe = bindir / name
+    monkeypatch.setattr(sys, "argv", [str(exe), "watchdog", "install"])
+    # what render_units() must resolve `exe` to: an absolute path named lulism
+    # is honoured verbatim; the mcctl shim is swapped for its lulism sibling.
+    return str(bindir / "lulism")
+
+
+def test_watchdog_install_writes_units_to_xdg(isolated_xdg, tmp_path, capsys, monkeypatch):
     """_install_units() calls util.migrate_units(), whose default `run` shells
     out to the real `systemctl --user` (isolated_xdg only overrides XDG_*, not
     DBUS_SESSION_BUS_ADDRESS). On a box that actually has old mcctl-* units
@@ -179,6 +197,7 @@ def test_watchdog_install_writes_units_to_xdg(isolated_xdg, capsys, monkeypatch)
             self.calls.append(list(cmd))
             return 0
 
+    exe = _pin_argv0(monkeypatch, tmp_path)
     fake = FakeSystemctl()
     real_migrate_units = util.migrate_units
     monkeypatch.setattr(util, "migrate_units",
@@ -202,21 +221,49 @@ def test_watchdog_install_writes_units_to_xdg(isolated_xdg, capsys, monkeypatch)
 
     written = sorted(p.name for p in util.user_unit_dir().iterdir())
     assert "lulism-watchdog.service" in written and len(written) == 7
+    # the ExecStart is fully determined by the argv[0] pinned above — this is the
+    # pipx layout (~/.local/bin/lulism), where a bare or /usr/bin ExecStart would
+    # fail 203/EXEC because systemd's own PATH excludes it.
     text = (util.user_unit_dir() / "lulism-backup.service").read_text()
-    assert "backup create --notify" in text
+    assert f"ExecStart={exe} backup create --notify" in text
+    assert "ExecStart=/usr/bin/lulism " not in text
 
     # Reloading before the new files land leaves systemd unaware of them until
     # the operator runs a reload of their own.
     assert reloaded_with == [written], reloaded_with
 
 
+@pytest.mark.parametrize("argv0,expected", [
+    # reached through the deprecated shim: never hardcode a binary that is
+    # removed at 3.0.0 into a long-lived unit — use its `lulism` sibling
+    ("mcctl", "sibling"),
+    # anything that is not an absolute `lulism`/`mcctl` path (a test runner, a
+    # tox shim) falls back rather than being written into a unit file
+    ("pytest", "/usr/bin/lulism"),
+])
+def test_watchdog_install_execstart_never_depends_on_how_it_was_invoked(
+        isolated_xdg, tmp_path, capsys, monkeypatch, argv0, expected):
+    from lulism import util
+    from lulism.cli import _install_units
+
+    monkeypatch.setattr(util, "migrate_units", lambda run=None, **kw: [])
+    monkeypatch.setattr(util, "systemd_daemon_reload", lambda run=None: None)
+    sibling = _pin_argv0(monkeypatch, tmp_path, name=argv0)
+    exe = sibling if expected == "sibling" else expected
+
+    assert _install_units() == 0
+    text = (util.user_unit_dir() / "lulism-watchdog.service").read_text()
+    assert f"ExecStart={exe} watchdog run" in text
+
+
 def test_watchdog_install_reports_only_units_that_really_existed(
-        isolated_xdg, capsys, monkeypatch):
+        isolated_xdg, tmp_path, capsys, monkeypatch):
     """migrate_units() used to return legacy_unit_names() unconditionally, so a
     fresh install announced removing seven units that had never existed."""
     from lulism import util
     from lulism.cli import _install_units
 
+    _pin_argv0(monkeypatch, tmp_path)
     calls: list[list[str]] = []
     real_migrate_units = util.migrate_units
     monkeypatch.setattr(util, "migrate_units",

@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import shutil
+from pathlib import Path
 
 import pytest
 
@@ -95,10 +97,27 @@ def test_backup_offsite_surfaces_unconfigured(srv):
     assert "not configured" in err["message"]
 
 
-def test_status_over_local_transport(srv):
+def test_status_over_local_transport(srv, cfg):
+    """Drives the real LocalTransport, so it must assert something the probe can
+    only produce by actually running.
+
+    `running is False` alone did not: status() sets running = (pid is not None),
+    so an empty probe — or one that never ran at all — satisfies it. Proven by
+    reducing PATH to a directory holding nothing but bash: the old assertion
+    still passed with every probed binary missing. Give the probe a file whose
+    mtime we control and check it read it back."""
+    assert shutil.which("bash"), \
+        "every transport pipes its payload to `bash -s`; without bash this is not a skip"
+    log = Path(cfg.server.server_dir) / cfg.server.log_file
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text("[12:00:00] [Server thread/INFO]: Done (1.0s)!\n", encoding="utf-8")
+
     r = _call(srv, "status", {"fast": True})
-    assert "running" in r["result"]
-    assert r["result"]["running"] is False  # nothing running in the test box
+    res = r["result"]
+    assert res["running"] is False          # no java in the sandbox server_dir
+    assert res["pid"] is None
+    # only a probe that really executed (date, stat) can fill this in
+    assert isinstance(res["log_age_s"], int) and 0 <= res["log_age_s"] <= 300
 
 
 def test_cmd_validates_empty(srv):

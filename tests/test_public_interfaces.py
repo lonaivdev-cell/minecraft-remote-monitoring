@@ -9,11 +9,16 @@ update the constant — revert whatever renamed the interface.
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
-import lulism
+from conftest import package_source_tree
+
 from lulism import prometheus
 from lulism.config import Config
+
+# The tree these guards audit: src/lulism in this checkout. `lulism.__file__`
+# would instead be whichever copy is importable, which is the same directory
+# only for an editable install — see conftest.package_source_tree().
+PKG = package_source_tree()
 
 EXPECTED_METRICS = {
     "mcctl_up",
@@ -90,7 +95,7 @@ LEAK_ALLOWLIST_LINES = {
 
 
 def test_no_stray_mcctl_identifiers_survive():
-    pkg = Path(lulism.__file__).parent
+    pkg = PKG
     # \bmcctl\b does not match mcctl_tps or mcctl_version ("_" is a word char, so
     # no boundary), which is why the frozen metric names and the agent.hello wire
     # key do not trip this. It DOES match mcctl-watchdog.service — those live in
@@ -109,6 +114,5 @@ def test_no_stray_mcctl_identifiers_survive():
 
 
 def test_units_shipped_in_the_package_are_lulism_named():
-    pkg = Path(lulism.__file__).parent
-    shipped = {p.name for p in (pkg / "units").iterdir() if p.suffix in {".service", ".timer"}}
+    shipped = {p.name for p in (PKG / "units").iterdir() if p.suffix in {".service", ".timer"}}
     assert shipped and not any(n.startswith("mcctl-") for n in shipped)

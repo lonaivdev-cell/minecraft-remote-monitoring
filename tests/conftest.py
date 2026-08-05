@@ -2,14 +2,52 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shlex
 from collections import deque
+from pathlib import Path
 
 import pytest
 
 from lulism.config import Config
 from lulism.transport import BaseTransport, RunResult, TransportError
+
+
+def package_source_tree() -> Path:
+    """The `lulism` package **in this checkout** — src/lulism, not whatever copy
+    happens to be importable.
+
+    Every test that audits source *text* (stray `mcctl` identifiers, the shipped
+    unit files, gui_app's constants) must read the tree under review. With
+    `pip install -e .` `Path(lulism.__file__).parent` resolves to the same
+    directory, which is why nobody noticed the difference; under any
+    non-editable install — the PKGBUILD's check(), which runs a plain
+    `python -m pytest` with src/ not on sys.path — it points at the *previously
+    installed* package, and the guards then pass vacuously against stale code no
+    matter what the working tree contains."""
+    src = Path(__file__).resolve().parent.parent / "src" / "lulism"
+    if not src.is_dir():
+        raise RuntimeError(f"expected the package source at {src}; these guards audit "
+                           "the checkout, not the installed copy")
+    return src
+
+
+def integration_gate(available: bool, reason: str):
+    """Skip an integration module whose real dependency is missing — unless
+    LULISM_REQUIRE_INTEGRATION=1, where the absence is a hard error instead.
+
+    A bare `skipif` lets the integration job exit 0 while exercising nothing:
+    a flaky apt cache with no tmux, or console scripts that landed somewhere
+    this file did not look, silently deletes the whole real-process safety net
+    and still shows a green tick. CI sets the flag on the integration step, so
+    "the safety net did not run" is red rather than invisible; a developer's
+    box without tmux still just skips."""
+    if not available and os.environ.get("LULISM_REQUIRE_INTEGRATION") == "1":
+        raise RuntimeError(
+            f"LULISM_REQUIRE_INTEGRATION=1 but {reason} — the integration suite "
+            "must actually run here, not skip")
+    return pytest.mark.skipif(not available, reason=reason)
 
 
 @pytest.fixture(autouse=True)
