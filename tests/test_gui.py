@@ -57,12 +57,22 @@ def test_gui_app_compiles_and_declares_the_app_id():
     """The GTK-gated test below runs in neither environment — `gi` is absent on
     a headless dev box and pyproject declares no PyGObject extra, so CI never
     installs it either. That left the largest module in the package (gui_app,
-    ~3k lines) with no test touching it at all: a syntax error or a bad
-    module-level constant would ship undetected. Parse it here, where no GTK is
-    needed, so at least it must compile and keep its D-Bus/desktop-file APP_ID
-    (the .desktop file and the flatpak/AUR packaging key off that literal)."""
+    ~3k lines) with no test touching it at all. Compile it here, where no GTK is
+    needed, so it must at least be valid Python and keep its D-Bus/desktop-file
+    APP_ID (data/io.github.lonaivdev_cell.lulism.desktop, the matching icon
+    basename and PKGBUILD's install paths all key off that literal).
+
+    CI's `ruff check src tests` step already rejects a file that does not parse,
+    so the compile below is not the only line of defence — but ruff stops at the
+    parser too, and the constant is covered nowhere else."""
     src = GUI_APP.read_text(encoding="utf-8")
-    tree = compile(src, str(GUI_APP), "exec", ast.PyCF_ONLY_AST)  # raises on syntax errors
+    tree = ast.parse(src, str(GUI_APP))
+    # ast.parse (like PyCF_ONLY_AST, which this used to pass) stops at the
+    # parser. A module-level `return`, a `break` outside a loop, `await` in a
+    # non-async def and a duplicate parameter name all parse clean and only
+    # raise SyntaxError in the symbol-table pass — so do the real compile too,
+    # or this guard does not mean what its name says.
+    compile(src, str(GUI_APP), "exec")
     app_ids = [n.value.value for n in tree.body
                if isinstance(n, ast.Assign)
                and any(getattr(t, "id", "") == "APP_ID" for t in n.targets)

@@ -163,13 +163,29 @@ def test_exit_codes_pass_through(tmp_path, args, code):
 @pytest.mark.integration
 def test_works_when_scripts_dir_is_not_on_path(tmp_path):
     """The field case: systemd user units and non-interactive SSH both run with
-    a minimal PATH that excludes ~/.local/bin, where pipx puts both scripts."""
-    minimal = os.pathsep.join(d for d in ("/usr/bin", "/bin")
-                              if Path(d).resolve() != SCRIPTS.resolve())
-    env = _child_env(tmp_path / "home", path=minimal or os.devnull)
-    if shutil.which("lulism", path=env["PATH"]):
-        pytest.skip("a `lulism` is reachable on the minimal PATH here, so this "
-                    "run cannot prove the sibling lookup is what found it")
+    a minimal PATH that excludes ~/.local/bin, where pipx puts both scripts.
+
+    The PATH is narrowed rather than skipped over. This used to bail out with an
+    in-body pytest.skip() when a `lulism` happened to be reachable — a silent
+    skip that runs *after* the module-level gate and is therefore invisible to
+    LULISM_REQUIRE_INTEGRATION, in the one test the docstring calls the field
+    case. It fires on an ordinary Arch box: install per CLAUDE.md with
+    `makepkg -si` (which puts lulism in /usr/bin) and run the suite from the
+    checkout venv, and the sole regression test for the sibling lookup deletes
+    itself with a green tick. Drop the offending directories instead, so the
+    test still runs; if one is somehow left, fail rather than skip."""
+    minimal = os.pathsep.join(
+        d for d in ("/usr/bin", "/bin")
+        if Path(d).resolve() != SCRIPTS.resolve() and not (Path(d) / "lulism").exists())
+    # every candidate held a lulism (on merged-usr, /bin *is* /usr/bin): an
+    # empty directory is still a valid PATH, and the point is only that execvp's
+    # own search must come up empty.
+    empty = tmp_path / "empty-path"
+    empty.mkdir(parents=True, exist_ok=True)
+    env = _child_env(tmp_path / "home", path=minimal or str(empty))
+    assert not shutil.which("lulism", path=env["PATH"]), (
+        f"the minimal PATH ({env['PATH']}) still reaches a `lulism`, so this run "
+        "cannot prove the sibling lookup is what found it")
     r = subprocess.run([str(SCRIPTS / "mcctl"), "agent", "--schema"],
                        capture_output=True, text=True, timeout=60, env=env)
     assert r.returncode == 0, r.stderr
